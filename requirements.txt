@@ -1,0 +1,7 @@
+fastapi
+pydantic
+sqlalchemy
+pytest
+pyodbc
+alembic
+python-dotenv
