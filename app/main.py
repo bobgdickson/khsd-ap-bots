@@ -1,10 +1,11 @@
 from typing import List, Dict
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import models, database
+from urllib.parse import unquote
 
 app = FastAPI(title="AP Bot Process Log API")
 
@@ -22,21 +23,20 @@ def list_runids(db: Session = Depends(database.get_db)):
     return [row[0] for row in rows]
 
 
-@app.get("/runids/{runid}/status_counts", response_model=Dict[str, int])
-def status_counts(runid: str, db: Session = Depends(database.get_db)):
-    """Get count of each status for a given run ID."""
+@app.get("/runids/status_counts", response_model=Dict[str, int])
+def status_counts(runid: str = Query(...), db: Session = Depends(database.get_db)):
+    """Get count of each status for run IDs starting with the given value."""
     rows = (
         db.query(
             models.APBotProcessLog.status,
             func.count(models.APBotProcessLog.id)
         )
-        .filter(models.APBotProcessLog.runid == runid)
+        .filter(models.APBotProcessLog.runid.like(f"{runid}%"))
         .group_by(models.APBotProcessLog.status)
         .all()
     )
     if not rows:
-        # no entries found for runid
-        raise HTTPException(status_code=404, detail=f"No entries found for runid '{runid}'")
+        raise HTTPException(status_code=404, detail=f"No entries found for runid starting with '{runid}'")
     return {status: count for status, count in rows}
 
 
