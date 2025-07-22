@@ -6,3 +6,4 @@ pyodbc
 alembic
 python-dotenv
 uvicorn
+playwright
