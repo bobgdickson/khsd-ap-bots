@@ -7,3 +7,5 @@ alembic
 python-dotenv
 uvicorn
 playwright
+openai-agents
+pymupdf
