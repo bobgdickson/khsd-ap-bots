@@ -1,4 +1,4 @@
-from playwright.sync_api import sync_playwright, PlaywrightTimeoutError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import time
 
 def ps_target_frame(page):
