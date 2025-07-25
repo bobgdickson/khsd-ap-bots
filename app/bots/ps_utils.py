@@ -45,3 +45,14 @@ def ps_find_retry(page, label_or_selector, timeout=2000, retries=2, delay=1):
             print(f"Retry {attempt + 1} for '{label_or_selector}' (reason: {e})")
             time.sleep(delay)
     raise Exception(f"❌ Failed to find '{label_or_selector}' after {retries} attempts.")
+
+def handle_peoplesoft_alert(page, timeout=2000):
+    try:
+        alert = page.locator("#alertmsg")
+        alert.wait_for(timeout=timeout)
+        text = alert.text_content()
+        print(f"❌ PeopleSoft Modal: {text.strip()}")
+        alert.locator("button").click()
+        return text.strip()
+    except PlaywrightTimeoutError:
+        return None

@@ -89,7 +89,7 @@ invoice_extract_agent = Agent(
         "Return only valid JSON that matches the expected format."
     ),
     tools=[extract_pdf_contents],
-    model="gpt-4.1",
+    model="gpt-4.1-mini",
     output_type=ExtractedInvoiceData,
 )
 
@@ -132,5 +132,5 @@ async def run_invoice_extraction(invoice_path: str | Path):
 # ---------- MAIN ----------
 
 if __name__ == "__main__":
-    sample_invoice = "/data/sample_invoice.pdf"  # full path is safer
+    sample_invoice = "./data/sample.pdf"
     asyncio.run(run_invoice_extraction(sample_invoice))
