@@ -8,4 +8,5 @@ python-dotenv
 uvicorn
 playwright
 openai-agents
+openai-agents[litellm]
 pymupdf

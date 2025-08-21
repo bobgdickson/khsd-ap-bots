@@ -1,14 +1,16 @@
 from typing import List, Dict
-
+from anyio import from_thread
 from fastapi import FastAPI, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-
+from pydantic import BaseModel
 from . import models, database
 from urllib.parse import unquote
 
 app = FastAPI(title="AP Bot Process Log API")
 
+class ExtractInvoiceIn(BaseModel):
+    filename: str
 
 @app.on_event("startup")
 def on_startup():
@@ -48,3 +50,18 @@ def delete_runid(runid: str, db: Session = Depends(database.get_db)):
         raise HTTPException(status_code=404, detail=f"No entries found to delete for runid '{runid}'")
     db.commit()
     return {"deleted": deleted}
+
+@app.post("/extract_invoice")
+def extract_invoice(payload: ExtractInvoiceIn):
+    
+    """
+    Run the invoice_agent extraction process for the given filename and return the result.
+    """
+    filename = payload.filename
+    from .bots.invoice_agent import run_invoice_extraction  # Adjust import as needed
+    print(f"🔍 Extracting invoice from: {filename}")
+    try:
+        result = from_thread.run(run_invoice_extraction, filename)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return result.final_output

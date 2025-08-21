@@ -89,7 +89,7 @@ invoice_extract_agent = Agent(
         "Return only valid JSON that matches the expected format."
     ),
     tools=[extract_pdf_contents],
-    model="gpt-4.1-mini",
+    model="gpt-5-mini",
     output_type=ExtractedInvoiceData,
 )
 
