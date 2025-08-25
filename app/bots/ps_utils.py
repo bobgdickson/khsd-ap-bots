@@ -34,6 +34,35 @@ def ps_find(page, label_or_selector, timeout=5000):
 
     raise Exception(f"❌ Could not find '{label_or_selector}' using role or input name/id.")
 
+def ps_find_button(page, label_or_selector, timeout=5000):
+    """
+    Try to find a button inside PeopleSoft intelligently.
+    - First tries get_by_role("button", name=label)
+    - Then button[name=...] or button[id=...]
+    - Then full recursive DOM crawl fallback (TODO: optional)
+    """
+    frame = ps_target_frame(page)
+
+    # Try get_by_role with accessible name (label)
+    try:
+        locator = frame.get_by_role("button", name=label_or_selector)
+        locator.wait_for(timeout=timeout)
+        return locator
+    except PlaywrightTimeoutError:
+        pass
+
+    # Try button[name=...] or id=...
+    try:
+        locator = frame.locator(f'button[name="{label_or_selector}"], button[id="{label_or_selector}"]')
+        locator.wait_for(timeout=timeout)
+        return locator
+    except PlaywrightTimeoutError:
+        pass
+
+    # Optional: add full recursive fallback here if needed
+
+    raise Exception(f"❌ Could not find button '{label_or_selector}' using role or button name/id.")
+
 def ps_find_retry(page, label_or_selector, timeout=2000, retries=2, delay=1):
     """
     Retry wrapper for ps_find in case frame is still refreshing or being detached.
@@ -45,6 +74,18 @@ def ps_find_retry(page, label_or_selector, timeout=2000, retries=2, delay=1):
             print(f"Retry {attempt + 1} for '{label_or_selector}' (reason: {e})")
             time.sleep(delay)
     raise Exception(f"❌ Failed to find '{label_or_selector}' after {retries} attempts.")
+
+def ps_find_button_retry(page, label_or_selector, timeout=2000, retries=2, delay=1):
+    """
+    Retry wrapper for ps_find_button in case frame is still refreshing or being detached.
+    """
+    for attempt in range(retries):
+        try:
+            return ps_find_button(page, label_or_selector, timeout)
+        except Exception as e:
+            print(f"Retry {attempt + 1} for button '{label_or_selector}' (reason: {e})")
+            time.sleep(delay)
+    raise Exception(f"❌ Failed to find button '{label_or_selector}' after {retries} attempts.")
 
 def handle_peoplesoft_alert(page, timeout=2000):
     try:
