@@ -14,4 +14,19 @@ class VoucherEntryResult(BaseModel):
     voucher_id: str
     duplicate: bool
     out_of_balance: bool
-    
+
+class VoucherRunLog(BaseModel):
+    runid: str
+    vendor: str
+    processed: int = 0
+    successes: int = 0
+    duplicates: int = 0
+    failures: int = 0
+
+class VoucherProcessLog(BaseModel):
+    runid: str
+    filename: str
+    voucher_id: str
+    amount: float
+    invoice: str
+    status: str
