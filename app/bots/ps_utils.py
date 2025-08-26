@@ -93,7 +93,23 @@ def handle_peoplesoft_alert(page, timeout=2000):
         alert.wait_for(timeout=timeout)
         text = alert.text_content()
         print(f"❌ PeopleSoft Modal: {text.strip()}")
-        alert.locator("button").click()
         return text.strip()
     except PlaywrightTimeoutError:
         return None
+    
+def find_modal_button(page, label: str, timeout: int = 2000):
+    """
+    Searches through ptModFrame_0..9 for a button with the given label.
+    Returns the locator if found, else raises RuntimeError.
+    """
+    for i in range(0, 10):  # adjust if you expect more
+        try:
+            locator = page.locator(f"iframe[name='ptModFrame_{i}']")
+            frame = locator.content_frame
+            button = frame.get_by_role("button", name=label, exact=True)
+            button.wait_for(timeout=timeout)
+            print(f"Found '{label}' in ptModFrame_{i}")
+            return button
+        except Exception:
+            continue
+    raise RuntimeError(f"Button '{label}' not found in any ptModFrame_X iframe")

@@ -3,9 +3,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from app.bots.ps_utils import ps_target_frame, ps_find_retry, handle_peoplesoft_alert, ps_find_button, ps_find_button_retry
+from app.bots.ps_utils import ps_target_frame, ps_find_retry, handle_peoplesoft_alert, ps_find_button, find_modal_button
 from app.bots.invoice_agent import run_invoice_extraction
-from app.schemas import ExtractedInvoiceData
+from app.schemas import ExtractedInvoiceData, VoucherEntryResult
 
 load_dotenv()  # Load .env into environment
 
@@ -31,12 +31,18 @@ def get_invoices_in_data():
 
 def voucher_playwright_bot(
         invoice_data: ExtractedInvoiceData, 
+        filepath: str = None,
         royal_style_entry: bool = False,
+        rent_line: str = "FY26",
         test_mode: bool = False, 
-        wait_time: int = 500
-    ):
+        wait_time: int = 1000
+    ) -> VoucherEntryResult:
+    """
+    Runs Playwright bot for voucher entry in PeopleSoft.
+    """
     short_wait = wait_time
     long_wait = wait_time * 3
+    attach_wait = long_wait * 10
     apo_flag = False  # Flag to indicate if APO PO is used
     if test_mode == True:
         PS_BASE_URL = os.getenv("PEOPLESOFT_TEST_ENV", "https://kdfq92.hosted.cherryroad.com/") + "psp/KDFQ92"
@@ -54,6 +60,8 @@ def voucher_playwright_bot(
             # Step 1: Launch browser and go to login page
             browser = p.chromium.launch(headless=False)
             page = browser.new_page()
+            # Set to Maximize
+            page.set_viewport_size({"width": 1920, "height": 1080})
 
             page.goto(PS_BASE_URL)
 
@@ -130,7 +138,11 @@ def voucher_playwright_bot(
                 # Handle specific alert messages if needed
                 if "Invalid value" in alert_text:
                     print("❌ Please check the PO number.  Stopping Entry.")
-                    return
+                    return VoucherEntryResult(
+                        voucher_id="Invalid PO",
+                        duplicate=False,
+                        out_of_balance=False
+                    )
             
             # Voucher Page now
             if apo_flag and royal_style_entry:
@@ -161,6 +173,7 @@ def voucher_playwright_bot(
                 search_button.click()
                 # Check page for existence of text "Class Leasing" or "Mobile Modular", set class_mobile_flag = True
                 page.wait_for_load_state('networkidle')
+                
                 try:
                     class_leasing_locator = ps_target_frame(page).get_by_text("CLASS LEASING", exact=True)
                     class_leasing_locator.wait_for(timeout=2000)
@@ -168,18 +181,52 @@ def voucher_playwright_bot(
                     print("Class Leasing found in PO, setting class_mobile_flag = True")
                 except PlaywrightTimeoutError:
                     try:
-                        mobile_modular_locator = ps_target_frame(page).get_by_text("Mobile Modular", exact=True)
+                        mobile_modular_locator = ps_target_frame(page).get_by_text("MOBILE MODULAR/MCGRATH", exact=True)
                         mobile_modular_locator.wait_for(timeout=2000)
                         class_mobile_flag = True
                         print("Mobile Modular found in PO, setting class_mobile_flag = True")
                     except PlaywrightTimeoutError:
                         class_mobile_flag = False
                         print("Class Leasing or Mobile Modular NOT found in PO, setting class_mobile_flag = False")
-                
+
                 # Class Mobile Handling
                 if class_mobile_flag:
-                    # TODO: Add classmobile logic
-                    pass
+
+                    found_flag = False
+                    target_frame = page.frame(name="TargetContent")
+                    while True:
+                        try:
+                            # Look for the rent line text on the current page
+                            rent_locator = target_frame.get_by_text(rent_line)
+                            rent_locator.wait_for(timeout=2000)
+                            print(f"Found rent line {rent_line}")
+                            found_flag = True
+                            break
+                        except PlaywrightTimeoutError:
+                            # Not on this page, so try to click the "Show next row" button
+                            print("No rent line going next")
+                            try:
+                                next_button = page.locator("iframe[name=\"TargetContent\"]").content_frame.get_by_role("button", name="Show next row")
+                                # Ensure it's enabled and visible
+                                next_button.wait_for(state="visible", timeout=1000)
+                                next_button.click()
+                                page.wait_for_timeout(1000)  # give PS time to refresh the grid
+                                continue
+                            except PlaywrightTimeoutError:
+                                print(f"Rent line {rent_line} not found, and no more rows.")
+                                break
+
+                    if found_flag:
+                        # ✅ Do your processing logic for the rent line here
+                        print("✅ Rent Line found.  Continuing Entry.")
+                    else:
+                        # ❌ Handle not-found case
+                        print("❌ No rent line for PO number.  Stopping Entry.")
+                        return VoucherEntryResult(
+                            voucher_id=f"No {rent_line} Rent Line on PO",
+                            duplicate=False,
+                            out_of_balance=False
+                        )
 
                 # APO Handling just uses the first line, class mobile code above will be on the 'correct' Rent line by this point 
                 checkbox = ps_target_frame(page).locator("[id=\"VCHR_PANELS_WRK_LINE_SELECT_PO$0\"]")
@@ -194,16 +241,19 @@ def voucher_playwright_bot(
                 if alert_text:
                     # Handle specific alert messages if needed
                     if "Sales Tax" in alert_text:
-                        ok_button = ps_target_frame(page).get_by_role("button", name="OK")
+                        ok_button = page.get_by_role("button", name="OK")
                         ok_button.click()
-
+                    elif "Use Tax" in alert_text:
+                        ok_button = page.get_by_role("button", name="OK")
+                        ok_button.click()
                 # Delete auto-added first line (since we copied PO line with chartfields, etc in)
                 delete_line = ps_target_frame(page).get_by_role("button", name="Delete row").first
                 delete_line.click()
-                ok_button = ps_target_frame(page).get_by_role("button", name="OK")
+                page.wait_for_timeout(long_wait)
+                ok_button = page.get_by_role("button", name="OK")
                 ok_button.click()
                 page.wait_for_load_state('networkidle')
-                page.pause()
+
 
             # TODO Add Accounting Date FYE override
 
@@ -212,17 +262,85 @@ def voucher_playwright_bot(
             attachment_button = ps_target_frame(page).get_by_role("link", name="Attachments")
             attachment_button.click()
             page.wait_for_load_state('networkidle')
+
+            # 1) Enter the modal iframe
+            modal_frame = page.frame_locator("iframe[id^='ptModFrame']").first
+
+            # 2) Work only inside the visible modal content
+            btn = modal_frame.get_by_role("button", name="Add Attachment", exact=True)
+            btn.scroll_into_view_if_needed()
+            btn.focus()
+            page.wait_for_timeout(short_wait)
+            # Try normal click first
+            btn.click(timeout=2000)
             
-            page.pause()
-            add_attach_button = ps_find_button(page, "Add Attachment")
-            add_attach_button.click()
-            page.wait_for_load_state('networkidle')
+            browse_attach_button = find_modal_button(page, "Browse")
+            with page.expect_file_chooser() as fc_info:
+                browse_attach_button.click(force=True)
+            fc_info.value.set_files(str(Path(filepath).expanduser().resolve()))
 
-            browse_attach_button = ps_find_button(page, "Browse")
-            browse_attach_button.click()
-            page.wait_for_load_state('networkidle')
+            # Upload
+            upload_button = find_modal_button(page, "Upload")
+            upload_button.click()
 
-            page.pause()
+            page.wait_for_timeout(attach_wait)
+
+            # OK
+            ok_button = find_modal_button(page, "OK")
+            ok_button.click()
+            
+            page.wait_for_timeout(attach_wait)
+            save_button = page.locator("iframe[name=\"TargetContent\"]").content_frame.locator("#VCHR_PANELS_WRK_VCHR_SAVE_PB")
+            save_button.click()
+            page.wait_for_timeout(attach_wait)
+            alert_text = handle_peoplesoft_alert(page)
+
+            if alert_text:
+                # Handle specific alert messages if needed
+                if "Sales Tax" in alert_text:
+                    print("Sales Tax alert noted")
+                    ok_button = page.get_by_role("button", name="OK")
+                    ok_button.click()
+                elif "Duplicate" in alert_text:
+                    print("Duplicate invoice alert")
+                    duplicate_flag = True
+                    ok_button = page.get_by_role("button", name="OK")
+                    ok_button.click()
+                    return VoucherEntryResult(
+                        voucher_id="Duplicate",
+                        duplicate=duplicate_flag,
+                        out_of_balance=False
+                    )
+                elif "out of balance" in alert_text:
+                    print("Out of Balance alert")
+                    out_of_balance_flag = True
+                    ok_button = page.get_by_role("button", name="OK")
+                    ok_button.click()
+                    return VoucherEntryResult(
+                        voucher_id="Out of Balance",
+                        duplicate=False,
+                        out_of_balance=out_of_balance_flag
+                    )
+            
+            # Scrape Voucher ID
+            # 1) Get the TargetContent frame
+            target_frame = page.frame(name="TargetContent")
+            if target_frame is None:
+                raise RuntimeError("TargetContent frame not found")
+
+            # 2) Wait until the Voucher ID element no longer says "NEXT"
+            voucher_id_locator = target_frame.locator("#win0divVOUCHER_VOUCHER_ID")
+            voucher_id_locator.wait_for(state="visible", timeout=10000)
+
+
+            # 3) Scrape the text
+            voucher_id = voucher_id_locator.inner_text()
+            print("Voucher ID:", voucher_id)
+            return VoucherEntryResult(
+                voucher_id=voucher_id,
+                duplicate=False,
+                out_of_balance=False
+            )
 
 
 
@@ -251,17 +369,26 @@ def run_voucher_entry():
 def test_voucher_entry():
     print("Running test voucher entry with sample data...")
     test_invoice_data = ExtractedInvoiceData(
-        purchase_order="KERNH-APO950043I",
-        invoice_number="INV-1001",
+        purchase_order="KERNH-CON21057",
+        invoice_number="2760722",
         invoice_date="8/1/2025",
-        total_amount=1500.00,
-        sales_tax=75.00,
-        merchandise_amount=1300.00,
-        miscellaneous_amount=25.00,
-        shipping_amount=100.00
+        total_amount=625.00,
+        sales_tax=0,
+        merchandise_amount=625.00,
+        miscellaneous_amount=0.00,
+        shipping_amount=0.00
     )
-    voucher_playwright_bot(test_invoice_data, test_mode=True, royal_style_entry=True, wait_time=100)
+    filepath = "./data/sample.pdf"
+    result = voucher_playwright_bot(
+        test_invoice_data, 
+        filepath=filepath, 
+        rent_line="FY25", 
+        test_mode=True, 
+        royal_style_entry=False, 
+        wait_time=100)
+    print(result)
 
 if __name__ == "__main__":
     test_voucher_entry()
+    
     # run_voucher_entry()

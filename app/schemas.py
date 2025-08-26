@@ -9,3 +9,9 @@ class ExtractedInvoiceData(BaseModel):
     merchandise_amount: float
     miscellaneous_amount: float
     shipping_amount: float
+
+class VoucherEntryResult(BaseModel):
+    voucher_id: str
+    duplicate: bool
+    out_of_balance: bool
+    
