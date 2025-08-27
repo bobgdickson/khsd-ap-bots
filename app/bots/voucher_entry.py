@@ -239,7 +239,7 @@ def voucher_playwright_bot(
                 browser.close()
 
 
-def run_vendor_entry(base_dir: str, vendor_key: str, test_mode: bool = True, rent_line: str = "FY26"):
+def run_vendor_entry(base_dir: str, vendor_key: str, test_mode: bool = True, rent_line: str = "FY26", apo_override: str = None):
     """
     Process all invoices for one vendor in a directory.
     Returns (VoucherRunLog, list[VoucherProcessLog]).
@@ -267,7 +267,12 @@ def run_vendor_entry(base_dir: str, vendor_key: str, test_mode: bool = True, ren
 
     for invoice in invoices:
         try:
+            # LLM Agent PDF Extraction
             invoice_data = asyncio.run(run_invoice_extraction(str(invoice))).final_output
+            # Strip white space from PO
+            invoice_data.purchase_order = invoice_data.purchase_order.strip()
+            if apo_override:
+                invoice_data.purchase_order = apo_override
             if not invoice_data:
                 print(f"❌ Failed extraction: {invoice.name}")
                 runlog.failures += 1
@@ -293,7 +298,8 @@ def run_vendor_entry(base_dir: str, vendor_key: str, test_mode: bool = True, ren
             )
 
             runlog.processed += 1
-
+            
+            # Move files
             if result.duplicate:
                 runlog.duplicates += 1
                 status = "duplicate"
@@ -429,5 +435,5 @@ def test_voucher_entry():
     
 if __name__ == "__main__":
     base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents\InvoiceProcessing"
-    runlog, process_logs = run_vendor_entry(base_dir, "royal", test_mode=True, rent_line="FY26")
+    runlog, process_logs = run_vendor_entry(base_dir, "royal", test_mode=True, rent_line="FY26", apo_override="KERNH-APO950043I")
 

@@ -106,11 +106,11 @@ async def run_invoice_extraction(invoice_path: str | Path):
 
         print(f"📄 Processing: {invoice_path}")
 
-        with trace("Extracting invoice fields"):
-            result = await Runner.run(invoice_extract_agent, str(invoice_path))
-            print("✅ Extraction result:")
-            print(result)
-            return result
+        #with trace("Extracting invoice fields"):
+        result = await Runner.run(invoice_extract_agent, str(invoice_path))
+        print("✅ Extraction result:")
+        print(result)
+        return result
 
     except ValidationError as ve:
         print("❌ Validation error in extracted data:")
@@ -119,6 +119,7 @@ async def run_invoice_extraction(invoice_path: str | Path):
 
     except Exception as e:
         print("❌ Unexpected error during invoice extraction")
+        print(e)
         return None
 
 # ---------- MAIN ----------
