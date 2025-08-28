@@ -108,8 +108,8 @@ async def run_invoice_extraction(invoice_path: str | Path):
 
         #with trace("Extracting invoice fields"):
         result = await Runner.run(invoice_extract_agent, str(invoice_path))
-        print("✅ Extraction result:")
-        print(result)
+        #print("✅ Extraction result:")
+        #print(result)
         return result
 
     except ValidationError as ve:

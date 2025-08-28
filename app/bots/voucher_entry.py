@@ -16,29 +16,34 @@ from app.bots.ps_utils import (
 )
 from app.bots.invoice_agent import run_invoice_extraction
 from app.schemas import ExtractedInvoiceData, VoucherEntryResult, VoucherRunLog, VoucherProcessLog
+from app import models, database
 from datetime import datetime
+from dateutil import parser
 
-def generate_runid(vendor_key: str) -> str:
+def normalize_date(date_str: str) -> str:
+    """
+    Convert various date formats into mm/dd/yyyy
+    """
+    try:
+        dt = parser.parse(date_str, dayfirst=False, fuzzy=True)
+        return dt.strftime("%m/%d/%Y")
+    except Exception:
+        return None
+    
+def generate_runid(vendor_key: str, test_mode: bool = False) -> str:
     ts = datetime.now().strftime("%m-%d-%y-%H-%M")
-    return f"{vendor_key.capitalize()}-{ts}"
+    prefix = "test-" if test_mode else ""
+    return f"{prefix}{vendor_key.capitalize()}-{ts}"
 
 load_dotenv()
 
 USERNAME = os.getenv("PEOPLESOFT_USERNAME")
 PASSWORD = os.getenv("PEOPLESOFT_PASSWORD")
 
-# Directory mapping (folder names → vendor keys)
-VENDOR_DIRS = {
-    "royal": "Royal Industrial",
-    "class_leasing": "Class Leasing",
-    "mobile_modular": "Mobile Modular",
-    "floyds": "Floyds",
-    "sequoia": "Sequoia",
-    "cdw": "CDW",
-}
+
 
 # Vendors that require "royal style entry"
-ROYAL_STYLE_VENDORS = {"royal", "class_leasing", "mobile_modular"}
+ROYAL_STYLE_VENDORS = {"royal"}
 
 
 def get_invoices_in_data():
@@ -161,7 +166,10 @@ def voucher_playwright_bot(
                 ps_find_retry(page, "PO Number").fill(po)
                 ps_find_button(page, "Copy PO").click()
                 page.wait_for_load_state("networkidle")
-
+                # Potential alert for no matching PO
+                alert_text = handle_peoplesoft_alert(page)
+                if alert_text and "Invalid value" in alert_text:
+                    return VoucherEntryResult(voucher_id="Invalid PO", duplicate=False, out_of_balance=False)
                 frame = ps_target_frame(page)
                 frame.get_by_role("button", name="Search", exact=True).click()
                 page.wait_for_load_state("networkidle")
@@ -169,7 +177,7 @@ def voucher_playwright_bot(
                 # Detect vendor type
                 class_mobile_flag = False
                 try:
-                    ps_target_frame(page).get_by_text("CLASS LEASING", exact=True).wait_for(
+                    ps_target_frame(page).get_by_text("CLASS").wait_for(
                         timeout=2000
                     )
                     class_mobile_flag = True
@@ -177,7 +185,7 @@ def voucher_playwright_bot(
                 except PlaywrightTimeoutError:
                     try:
                         ps_target_frame(page).get_by_text(
-                            "MOBILE MODULAR/MCGRATH", exact=True
+                            "MOBILE"
                         ).wait_for(timeout=2000)
                         class_mobile_flag = True
                         print("Mobile Modular found in PO")
@@ -191,9 +199,11 @@ def voucher_playwright_bot(
                 ps_target_frame(page).locator(
                     '[id="VCHR_PANELS_WRK_LINE_SELECT_PO$0"]'
                 ).check()
+                ps_wait(page, 3)
                 ps_target_frame(page).locator(
                     '[id="VCHR_MTCH_WS4_MERCHANDISE_AMT$0"]'
                 ).fill(str(invoice_data.merchandise_amount))
+                ps_wait(page, 3)
                 ps_target_frame(page).get_by_role(
                     "button", name="Copy Selected Lines"
                 ).click()
@@ -210,6 +220,7 @@ def voucher_playwright_bot(
                 ps_target_frame(page).get_by_role("button", name="Delete row").first.click()
                 ps_wait(page, 3)
                 page.get_by_role("button", name="OK").click()
+                ps_wait(page, 3)
                 page.wait_for_load_state("networkidle")
 
             # --- Attachments ---
@@ -239,12 +250,34 @@ def voucher_playwright_bot(
                 browser.close()
 
 
-def run_vendor_entry(base_dir: str, vendor_key: str, test_mode: bool = True, rent_line: str = "FY26", apo_override: str = None):
+def run_vendor_entry(vendor_key: str, test_mode: bool = True, rent_line: str = "FY26", apo_override: str = None):
     """
     Process all invoices for one vendor in a directory.
     Returns (VoucherRunLog, list[VoucherProcessLog]).
     """
     t0 = time.time()
+    if test_mode:
+        base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents\InvoiceProcessing"
+        # Directory mapping (folder names → vendor keys)
+        VENDOR_DIRS = {
+            "royal": "Royal Industrial",
+            "class": "Class Leasing",
+            "mobile": "Mobile Modular",
+            "floyds": "Floyds",
+            "seq": "Sequoia",
+            "cdw": "CDW",
+        }
+    else:
+        base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents - Fiscal\Accounts Payable"
+        # Directory mapping (folder names → vendor keys)
+        VENDOR_DIRS = {
+            "royal": "Royal Industrial",
+            "class": "Class Leasing Invoices",
+            "mobile": "Mobile Modular Invoices",
+            "floyds": "Floyd's (Standard Plumbing) invoices",
+            "seq": "Sequioa Paint",
+            "cdw": "CDW",
+        }
     vendor_path = Path(base_dir) / VENDOR_DIRS[vendor_key]
     if not vendor_path.exists():
         raise RuntimeError(f"Vendor directory {vendor_path} not found")
@@ -254,7 +287,7 @@ def run_vendor_entry(base_dir: str, vendor_key: str, test_mode: bool = True, ren
         print(f"No invoices found in {vendor_path}")
         return None, []
 
-    runid = generate_runid(vendor_key)
+    runid = generate_runid(vendor_key, test_mode)
     runlog = VoucherRunLog(runid=runid, vendor=vendor_key)
     process_logs: list[VoucherProcessLog] = []
 
@@ -271,6 +304,7 @@ def run_vendor_entry(base_dir: str, vendor_key: str, test_mode: bool = True, ren
             invoice_data = asyncio.run(run_invoice_extraction(str(invoice))).final_output
             # Strip white space from PO
             invoice_data.purchase_order = invoice_data.purchase_order.strip()
+            invoice_data.invoice_date = normalize_date(invoice_data.invoice_date)
             if apo_override:
                 invoice_data.purchase_order = apo_override
             if not invoice_data:
@@ -304,46 +338,59 @@ def run_vendor_entry(base_dir: str, vendor_key: str, test_mode: bool = True, ren
                 runlog.duplicates += 1
                 status = "duplicate"
                 voucher_id = "Duplicate"
+                print(f"Moving duplicate invoice {invoice.name} to NotProcessed.")
                 shutil.move(str(invoice), notprocessed_dir / invoice.name)
             elif result.voucher_id.isdigit():
                 runlog.successes += 1
                 status = "success"
                 voucher_id = result.voucher_id
+                print(f"Moving entered invoice {invoice.name} to Processed.")
                 shutil.move(str(invoice), processed_dir / invoice.name)
             else:
                 runlog.failures += 1
                 status = "failure"
                 voucher_id = result.voucher_id
+                print(f"Not moving failed invoice {invoice.name}.")
                 # leave file in place
-
-            process_logs.append(
-                VoucherProcessLog(
-                    runid=runid,
-                    filename=invoice.name,
-                    voucher_id=voucher_id,
-                    amount=invoice_data.total_amount,
-                    invoice=invoice_data.invoice_number,
-                    status=status,
-                )
+            
+            process_log = VoucherProcessLog(
+                runid=runid,
+                filename=invoice.name,
+                voucher_id=voucher_id,
+                amount=invoice_data.total_amount,
+                invoice=invoice_data.invoice_number,
+                status=status,
             )
-
+            
         except Exception as e:
             print(f"💥 Error processing {invoice.name}: {e}")
             runlog.failures += 1
-            process_logs.append(
-                VoucherProcessLog(
-                    runid=runid,
-                    filename=invoice.name,
-                    voucher_id="Error",
-                    amount=0.0,
-                    invoice="",
-                    status="failure",
-                )
+            VoucherProcessLog(
+                runid=runid,
+                filename=invoice.name,
+                voucher_id="Error",
+                amount=0.0,
+                invoice="",
+                status="failure",
             )
+
+
+        # Write to DB
+        print(process_log)
+        db = database.SessionLocal()
+        try:
+                payload = process_log.model_dump()
+                orm_row = models.APBotProcessLog(**payload)
+                db.add(orm_row)
+                db.commit()
+                print("Logged to database.")
+        finally:
+            db.close()
+
     t1 = time.time()
     print(f"Average time per invoice: {(t1 - t0) / len(invoices):.2f} seconds.")
     print(f"✅ Completed run {runid}: {runlog.successes} success, {runlog.duplicates} duplicates, {runlog.failures} failures")
-    return runlog, process_logs
+    return runlog
 
     
 def test_voucher_entry():
@@ -434,6 +481,5 @@ def test_voucher_entry():
     assert royalstyle_result.voucher_id not in ["Duplicate", "Out of Balance", "Invalid PO", f"No FY25 Rent Line on PO"]
     
 if __name__ == "__main__":
-    base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents\InvoiceProcessing"
-    runlog, process_logs = run_vendor_entry(base_dir, "royal", test_mode=True, rent_line="FY26", apo_override="KERNH-APO950043I")
-
+    #runlog = run_vendor_entry("royal", test_mode=True, rent_line="FY26", apo_override="KERNH-APO950043I")
+    runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26")

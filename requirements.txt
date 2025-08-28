@@ -10,3 +10,4 @@ playwright
 openai-agents
 openai-agents[litellm]
 pymupdf
+python-dateutil
