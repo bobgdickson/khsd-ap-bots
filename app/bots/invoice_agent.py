@@ -50,7 +50,7 @@ def extract_pdf_contents(input: str) -> PDFExtractionResult:
 
         # Render first page as image
         first_page = doc[0]
-        pix = first_page.get_pixmap(dpi=150)
+        pix = first_page.get_pixmap(dpi=96)
         img_bytes = pix.tobytes("png")
         image_base64 = base64.b64encode(img_bytes).decode("utf-8")
 

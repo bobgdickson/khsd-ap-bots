@@ -43,7 +43,7 @@ PASSWORD = os.getenv("PEOPLESOFT_PASSWORD")
 
 
 # Vendors that require "royal style entry"
-ROYAL_STYLE_VENDORS = {"royal"}
+ROYAL_STYLE_VENDORS = {"royal", "floyds"}
 
 
 def get_invoices_in_data():
@@ -232,7 +232,7 @@ def voucher_playwright_bot(
 
             # --- Save ---
             ps_target_frame(page).locator("#VCHR_PANELS_WRK_VCHR_SAVE_PB").click()
-            ps_wait(page, 10)
+            ps_wait(page, 5)
 
             alert_text, duplicate, out_of_balance = handle_alerts(page)
             if duplicate:
@@ -481,5 +481,6 @@ def test_voucher_entry():
     assert royalstyle_result.voucher_id not in ["Duplicate", "Out of Balance", "Invalid PO", f"No FY25 Rent Line on PO"]
     
 if __name__ == "__main__":
-    #runlog = run_vendor_entry("royal", test_mode=True, rent_line="FY26", apo_override="KERNH-APO950043I")
-    runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26")
+    #runlog = run_vendor_entry("royal", test_mode=False, rent_line="FY26", apo_override="KERNH-APO950043J")
+    #runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26")
+    runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
