@@ -62,6 +62,7 @@ def voucher_playwright_bot(
     invoice_data: ExtractedInvoiceData,
     filepath: str = None,
     royal_style_entry: bool = False,
+    attach_only: bool = False,
     rent_line: str = "FY26",
     test_mode: bool = False,
 ) -> VoucherEntryResult:
@@ -108,120 +109,146 @@ def voucher_playwright_bot(
             )
             page.wait_for_load_state("networkidle")
 
-            # --- Voucher Entry Fields ---
-            ps_find_retry(page, "Invoice Number").fill(invoice_data.invoice_number)
-            ps_find_retry(page, "Invoice Date").fill(invoice_data.invoice_date)
-            ps_find_retry(page, "Gross Invoice Amount").fill(
-                str(invoice_data.total_amount)
-            )
-            if invoice_data.shipping_amount > 0:
-                ps_find_retry(page, "Freight Amount").fill(
-                    str(invoice_data.shipping_amount)
+            # Full Voucher Entry Flow
+            if not attach_only:
+                # --- Voucher Entry Fields ---
+                ps_find_retry(page, "Invoice Number").fill(invoice_data.invoice_number)
+                ps_find_retry(page, "Invoice Date").fill(invoice_data.invoice_date)
+                ps_find_retry(page, "Gross Invoice Amount").fill(
+                    str(invoice_data.total_amount)
                 )
-            if invoice_data.sales_tax > 0:
-                ps_find_retry(page, "Sales Tax Amount").fill(str(invoice_data.sales_tax))
-            if invoice_data.miscellaneous_amount > 0:
-                ps_find_retry(page, "Misc Charge Amount").fill(
-                    str(invoice_data.miscellaneous_amount)
-                )
+                if invoice_data.shipping_amount > 0:
+                    ps_find_retry(page, "Freight Amount").fill(
+                        str(invoice_data.shipping_amount)
+                    )
+                if invoice_data.sales_tax > 0:
+                    ps_find_retry(page, "Sales Tax Amount").fill(str(invoice_data.sales_tax))
+                if invoice_data.miscellaneous_amount > 0:
+                    ps_find_retry(page, "Misc Charge Amount").fill(
+                        str(invoice_data.miscellaneous_amount)
+                    )
 
-            po_input = ps_find_retry(page, "PO Number")
+                po_input = ps_find_retry(page, "PO Number")
 
-            if invoice_data.purchase_order.startswith("KERNH"):
-                bu, po = invoice_data.purchase_order.split("-", 1)
-            else:
-                bu = "KERNH"
-                po = invoice_data.purchase_order
+                if invoice_data.purchase_order.startswith("KERNH"):
+                    bu, po = invoice_data.purchase_order.split("-", 1)
+                else:
+                    bu = "KERNH"
+                    po = invoice_data.purchase_order
 
-            if royal_style_entry and invoice_data.purchase_order:
-                ps_find_retry(page, "PO Business Unit").fill(bu)
-                if "APO" in invoice_data.purchase_order:
-                    apo_flag = True
-                po_input.fill(po)
+                if royal_style_entry and invoice_data.purchase_order:
+                    ps_find_retry(page, "PO Business Unit").fill(bu)
+                    if "APO" in invoice_data.purchase_order:
+                        apo_flag = True
+                    po_input.fill(po)
 
-            po_input.focus()
-            for key in ["Tab", "Tab", "Tab", "Enter"]:
-                page.keyboard.press(key)
-                ps_wait(page, 1)
-            page.wait_for_load_state("networkidle")
-
-            # --- Handle Alert ---
-            alert_text = handle_peoplesoft_alert(page)
-            if alert_text and "Invalid value" in alert_text:
-                return VoucherEntryResult(voucher_id="Invalid PO", duplicate=False, out_of_balance=False)
-
-            # --- Copy from PO Flow ---
-            if apo_flag and royal_style_entry:
-                ps_find_retry(page, "Line Amount").fill(
-                    str(invoice_data.merchandise_amount)
-                )
-                ps_find_retry(page, "MERCHANDISE_AMT_DL$0").fill(
-                    str(invoice_data.merchandise_amount)
-                )
-                ps_find_retry(page, "VCHR_BAL_WRK_OD_BALANCE_PB").click()
+                po_input.focus()
+                for key in ["Tab", "Tab", "Tab", "Enter"]:
+                    page.keyboard.press(key)
+                    ps_wait(page, 1)
                 page.wait_for_load_state("networkidle")
-            else:
-                ps_find_button(page, "Copy From Source Document").click()
-                ps_find_retry(page, "PO Unit").fill("KERNH")
-                ps_find_retry(page, "PO Number").fill(po)
-                ps_find_button(page, "Copy PO").click()
-                page.wait_for_load_state("networkidle")
-                # Potential alert for no matching PO
+
+                # --- Handle Alert ---
                 alert_text = handle_peoplesoft_alert(page)
                 if alert_text and "Invalid value" in alert_text:
                     return VoucherEntryResult(voucher_id="Invalid PO", duplicate=False, out_of_balance=False)
-                frame = ps_target_frame(page)
-                frame.get_by_role("button", name="Search", exact=True).click()
-                page.wait_for_load_state("networkidle")
 
-                # Detect vendor type
-                class_mobile_flag = False
-                try:
-                    ps_target_frame(page).get_by_text("CLASS").wait_for(
-                        timeout=2000
+                # --- Copy from PO Flow ---
+                if apo_flag and royal_style_entry:
+                    ps_find_retry(page, "Line Amount").fill(
+                        str(invoice_data.merchandise_amount)
                     )
-                    class_mobile_flag = True
-                    print("Class Leasing found in PO")
-                except PlaywrightTimeoutError:
+                    ps_find_retry(page, "MERCHANDISE_AMT_DL$0").fill(
+                        str(invoice_data.merchandise_amount)
+                    )
+                    ps_find_retry(page, "VCHR_BAL_WRK_OD_BALANCE_PB").click()
+                    page.wait_for_load_state("networkidle")
+                else:
+                    ps_find_button(page, "Copy From Source Document").click()
+                    ps_find_retry(page, "PO Unit").fill("KERNH")
+                    ps_find_retry(page, "PO Number").fill(po)
+                    ps_find_button(page, "Copy PO").click()
+                    page.wait_for_load_state("networkidle")
+                    # Potential alert for no matching PO
+                    alert_text = handle_peoplesoft_alert(page)
+                    if alert_text and "Invalid value" in alert_text:
+                        return VoucherEntryResult(voucher_id="Invalid PO", duplicate=False, out_of_balance=False)
+                    frame = ps_target_frame(page)
+                    frame.get_by_role("button", name="Search", exact=True).click()
+                    page.wait_for_load_state("networkidle")
+
+                    # Detect vendor type
+                    class_mobile_flag = False
                     try:
-                        ps_target_frame(page).get_by_text(
-                            "MOBILE"
-                        ).wait_for(timeout=2000)
+                        ps_target_frame(page).get_by_text("CLASS").wait_for(
+                            timeout=2000
+                        )
                         class_mobile_flag = True
-                        print("Mobile Modular found in PO")
+                        print("Class Leasing found in PO")
                     except PlaywrightTimeoutError:
-                        print("No Class Leasing or Mobile Modular found.")
+                        try:
+                            ps_target_frame(page).get_by_text(
+                                "MOBILE"
+                            ).wait_for(timeout=2000)
+                            class_mobile_flag = True
+                            print("Mobile Modular found in PO")
+                        except PlaywrightTimeoutError:
+                            print("No Class Leasing or Mobile Modular found.")
 
-                if class_mobile_flag and not find_rent_line(page, rent_line):
-                    return VoucherEntryResult(voucher_id=f"No {rent_line} Rent Line on PO", duplicate=False, out_of_balance=False)
+                    if class_mobile_flag and not find_rent_line(page, rent_line):
+                        return VoucherEntryResult(voucher_id=f"No {rent_line} Rent Line on PO", duplicate=False, out_of_balance=False)
 
-                # Copy PO line
-                ps_target_frame(page).locator(
-                    '[id="VCHR_PANELS_WRK_LINE_SELECT_PO$0"]'
-                ).check()
-                ps_wait(page, 3)
-                ps_target_frame(page).locator(
-                    '[id="VCHR_MTCH_WS4_MERCHANDISE_AMT$0"]'
-                ).fill(str(invoice_data.merchandise_amount))
-                ps_wait(page, 3)
-                ps_target_frame(page).get_by_role(
-                    "button", name="Copy Selected Lines"
-                ).click()
-                page.wait_for_load_state("networkidle")
+                    # Copy PO line
+                    ps_target_frame(page).locator(
+                        '[id="VCHR_PANELS_WRK_LINE_SELECT_PO$0"]'
+                    ).check()
+                    ps_wait(page, 3)
+                    ps_target_frame(page).locator(
+                        '[id="VCHR_MTCH_WS4_MERCHANDISE_AMT$0"]'
+                    ).fill(str(invoice_data.merchandise_amount))
+                    ps_wait(page, 3)
+                    ps_target_frame(page).get_by_role(
+                        "button", name="Copy Selected Lines"
+                    ).click()
+                    page.wait_for_load_state("networkidle")
 
-                # Handle any alerts
-                alert_text, duplicate, out_of_balance = handle_alerts(page)
-                if duplicate:
-                    return VoucherEntryResult(voucher_id="Duplicate", duplicate=True, out_of_balance=False)
-                if out_of_balance:
-                    return VoucherEntryResult(voucher_id="Out of Balance", duplicate=False, out_of_balance=True)
+                    # Handle any alerts
+                    alert_text, duplicate, out_of_balance = handle_alerts(page)
+                    if duplicate:
+                        return VoucherEntryResult(voucher_id="Duplicate", duplicate=True, out_of_balance=False)
+                    if out_of_balance:
+                        return VoucherEntryResult(voucher_id="Out of Balance", duplicate=False, out_of_balance=True)
 
-                # Delete auto-added first line
-                ps_target_frame(page).get_by_role("button", name="Delete row").first.click()
-                ps_wait(page, 3)
-                page.get_by_role("button", name="OK").click()
-                ps_wait(page, 3)
-                page.wait_for_load_state("networkidle")
+                    # Delete auto-added first line
+                    ps_target_frame(page).get_by_role("button", name="Delete row").first.click()
+                    ps_wait(page, 3)
+                    page.get_by_role("button", name="OK").click()
+                    ps_wait(page, 3)
+                    page.wait_for_load_state("networkidle")
+            
+            # Attach Only Flow
+            else:
+                print("Attach-only mode")
+                ps_find_button(page, "Find an Existing Value Find").click()
+                ps_wait(page, 1)
+                user_input = ps_find_retry(page, "User ID").focus()
+                for key in ["Tab", "c", "Tab"]:
+                    page.keyboard.press(key)
+                    ps_wait(page, 1)
+                invoice_input = ps_find_retry(page, "Invoice Number").fill(invoice_data.invoice_number)
+                ps_target_frame(page).get_by_role("button", name="Search", exact=True).click()
+                invoice_not_found = False
+                try:
+                    ps_target_frame(page).get_by_text(
+                                    "No matching values were found"
+                                ).wait_for(timeout=2000)
+                    invoice_not_found = True
+                    print("Invoice not entered, skipping attachment.")
+                    return VoucherEntryResult(voucher_id="No voucher", duplicate=False, out_of_balance=False)
+                except PlaywrightTimeoutError:
+                    print("Invoice found, proceeding with attachment.")
+                    ps_target_frame(page).get_by_role("tab", name="Invoice Information").click()
+                    ps_wait(page, 1)
 
             # --- Attachments ---
             ps_target_frame(page).get_by_role("link", name="Attachments").click()
@@ -250,7 +277,7 @@ def voucher_playwright_bot(
                 browser.close()
 
 
-def run_vendor_entry(vendor_key: str, test_mode: bool = True, rent_line: str = "FY26", apo_override: str = None):
+def run_vendor_entry(vendor_key: str, test_mode: bool = True, rent_line: str = "FY26", attach_only: bool = False, apo_override: str = None):
     """
     Process all invoices for one vendor in a directory.
     Returns (VoucherRunLog, list[VoucherProcessLog]).
@@ -327,6 +354,7 @@ def run_vendor_entry(vendor_key: str, test_mode: bool = True, rent_line: str = "
                 invoice_data,
                 filepath=str(invoice),
                 rent_line=rent_line,
+                attach_only=attach_only,
                 test_mode=test_mode,
                 royal_style_entry=royal_style,
             )
@@ -480,7 +508,48 @@ def test_voucher_entry():
     )
     assert royalstyle_result.voucher_id not in ["Duplicate", "Out of Balance", "Invalid PO", f"No FY25 Rent Line on PO"]
     
+    cdw_result = voucher_playwright_bot(
+        ExtractedInvoiceData(
+            purchase_order="KERNH-0000220344",
+            invoice_number="AC2AL5S",
+            invoice_date="8/27/2025",
+            total_amount=625.00,
+            sales_tax=0,
+            merchandise_amount=625.00,
+            miscellaneous_amount=0.00,
+            shipping_amount=0.00,
+        ),
+        filepath = "./data/sample.pdf",
+        test_mode=True,
+        royal_style_entry=False,
+        attach_only=True,
+    )
+    assert cdw_result.voucher_id not in ["Duplicate", "Out of Balance", "Invalid PO", f"No FY25 Rent Line on PO"]
+
+    no_cdw_result = voucher_playwright_bot(
+        ExtractedInvoiceData(
+            purchase_order="KERNH-0000220344",
+            invoice_number="AC2AL5S",
+            invoice_date="8/27/2025",
+            total_amount=625.00,
+            sales_tax=0,
+            merchandise_amount=625.00,
+            miscellaneous_amount=0.00,
+            shipping_amount=0.00,
+        ),
+        filepath = "./data/sample.pdf",
+        test_mode=True,
+        royal_style_entry=False,
+        attach_only=True,
+    )
+    assert no_cdw_result.voucher_id in ["No voucher"]
+
 if __name__ == "__main__":
+    # Test runs
+    # test_voucher_entry()
+
+    # PRD runs
     #runlog = run_vendor_entry("royal", test_mode=False, rent_line="FY26", apo_override="KERNH-APO950043J")
     #runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26")
-    runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
+    #runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
+    runlog = run_vendor_entry("cdw", test_mode=False, attach_only=True)

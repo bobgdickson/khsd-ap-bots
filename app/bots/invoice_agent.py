@@ -11,62 +11,179 @@ from app.schemas import ExtractedInvoiceData
 
 load_dotenv()
 
-# ---------- OUTPUT MODELS ----------
+# OCR deps
+try:
+    import pytesseract
+    cmd = os.getenv("TESSERACT_CMD")
+    if cmd:
+        cmd = os.path.expandvars(cmd)  # lets you use %LOCALAPPDATA% if you prefer
+        pytesseract.pytesseract.tesseract_cmd = cmd
+    from PIL import Image, ImageOps, ImageFilter
+    _OCR_AVAILABLE = True
+except Exception:
+    _OCR_AVAILABLE = False
 
 class PDFExtractionResult(BaseModel):
-    """
-    Output model for PDF extraction tool.
-    - extracted_text: Full text extracted from the PDF
-    - image_base64: Base64-encoded PNG image of the first page
-    - success: Whether the extraction was successful
-    - description: A short status message
-    """
     extracted_text: str
     image_base64: str
     success: bool
     description: str
 
+# ---------- helpers ----------
 
-# ---------- TOOLS ----------
+def _page_pixmap(page, dpi: int) -> fitz.Pixmap:
+    scale = dpi / 72.0
+    return page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
 
-@function_tool
-def extract_pdf_contents(input: str) -> PDFExtractionResult:
+def _pixmap_to_pil(pix: fitz.Pixmap):
+    buf = io.BytesIO(pix.tobytes("png"))
+    from PIL import Image  # local import to avoid hard dep if not needed
+    return Image.open(buf)
+
+def _safe_preview_b64(page, dpi=140, *, max_chars=1_000_000) -> str:
     """
-    Extracts text and a base64-encoded PNG image of the first page from a PDF.
-    Uses PyMuPDF (fitz) instead of Poppler-based tools.
+    Build an image preview guaranteed to be <= max_chars in base64 length.
+    Uses JPEG + iterative downscale if needed; returns '' if it can't fit.
     """
     try:
-        doc = fitz.open(input)
+        from PIL import Image
+        pix = _page_pixmap(page, dpi=dpi)
+        img = _pixmap_to_pil(pix).convert("RGB")
+
+        quality = 60
+        width, height = img.size
+
+        while True:
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+            if len(b64) <= max_chars:
+                return b64
+            # shrink & (lightly) drop quality
+            new_w = max(int(width * 0.8), 400)
+            new_h = max(int(height * 0.8), 400)
+            if (new_w, new_h) == (width, height) and quality <= 45:
+                return ""  # give up, safer to omit
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+            width, height = new_w, new_h
+            if quality > 45:
+                quality -= 5
+    except Exception:
+        return ""
+
+def _preprocess_for_ocr(img):
+    from PIL import ImageOps, ImageFilter
+    g = ImageOps.grayscale(img)
+    g = ImageOps.autocontrast(g)
+    return g.filter(ImageFilter.MedianFilter(3))
+
+def _ocr_image(img, lang="eng", psm=6) -> str:
+    config = f"--oem 3 --psm {psm}"
+    return pytesseract.image_to_string(img, lang=lang, config=config)
+
+# ---------- tool ----------
+
+@function_tool
+def extract_pdf_contents(
+    input: str,
+    *,
+    ocr_if_empty: bool = True,
+    ocr_lang: str = "eng",
+    ocr_dpi: int = 300,
+    preview_dpi: int = 140,
+    max_ocr_pages: int = 5,
+    include_preview_on_ocr: bool = False,
+    max_preview_b64_chars: int = 1_000_000
+) -> PDFExtractionResult:
+    """
+    Extract text from a PDF. If no text layer, optionally OCR (Tesseract).
+    Returns a size-capped JPEG preview for native-text PDFs; omits the preview
+    on OCR (by default) to avoid large base64 payloads.
+    """
+    try:
+        path = Path(input).expanduser().resolve()
+        if not path.exists():
+            return PDFExtractionResult(
+                extracted_text="",
+                image_base64="",
+                success=False,
+                description=f"File not found: {path}",
+            )
+
+        doc = fitz.open(str(path))
         if len(doc) == 0:
             return PDFExtractionResult(
                 extracted_text="",
                 image_base64="",
                 success=False,
-                description="Empty or invalid PDF"
+                description="Empty or invalid PDF",
             )
 
-        # Extract text from all pages
-        extracted_text = "\n".join(page.get_text() for page in doc)
+        # 1) Native text layer
+        native_text_parts = [p.get_text() for p in doc]
+        native_text = "\n".join(t for t in native_text_parts if t).strip()
 
-        # Render first page as image
         first_page = doc[0]
-        pix = first_page.get_pixmap(dpi=96)
-        img_bytes = pix.tobytes("png")
-        image_base64 = base64.b64encode(img_bytes).decode("utf-8")
-
-        return PDFExtractionResult(
-            extracted_text=extracted_text.strip(),
-            image_base64=image_base64,
-            success=True,
-            description="PDF processed using PyMuPDF"
+        native_preview_b64 = _safe_preview_b64(
+            first_page, dpi=preview_dpi, max_chars=max_preview_b64_chars
         )
+
+        if native_text:
+            return PDFExtractionResult(
+                extracted_text=native_text,
+                image_base64=native_preview_b64,
+                success=True,
+                description="PyMuPDF text layer",
+            )
+
+        # 2) OCR fallback
+        if not (ocr_if_empty and _OCR_AVAILABLE):
+            return PDFExtractionResult(
+                extracted_text="",
+                image_base64=native_preview_b64,
+                success=False,
+                description="No text layer; OCR disabled/unavailable",
+            )
+
+        ocr_text_parts = []
+        pages_to_ocr = min(len(doc), max_ocr_pages)
+        for i in range(pages_to_ocr):
+            pix = _page_pixmap(doc[i], dpi=ocr_dpi)
+            pil_img = _pixmap_to_pil(pix)
+            pil_img = _preprocess_for_ocr(pil_img)
+            page_text = _ocr_image(pil_img, lang=ocr_lang, psm=6)
+            if page_text:
+                ocr_text_parts.append(page_text)
+
+        ocr_text = "\n".join(ocr_text_parts).strip()
+
+        ocr_preview_b64 = ""
+        if include_preview_on_ocr:
+            ocr_preview_b64 = _safe_preview_b64(
+                first_page, dpi=preview_dpi, max_chars=max_preview_b64_chars
+            )
+
+        if ocr_text:
+            return PDFExtractionResult(
+                extracted_text=ocr_text,
+                image_base64=ocr_preview_b64,
+                success=True,
+                description=f"OCR successful (dpi={ocr_dpi}, pages={pages_to_ocr})",
+            )
+        else:
+            return PDFExtractionResult(
+                extracted_text="",
+                image_base64=ocr_preview_b64,
+                success=False,
+                description="No text layer and OCR found no text",
+            )
 
     except Exception as e:
         return PDFExtractionResult(
             extracted_text="",
             image_base64="",
             success=False,
-            description=f"Error: {str(e)}"
+            description=f"Error: {type(e).__name__}: {e}",
         )
     
 # ---------- AGENT ----------
@@ -125,5 +242,5 @@ async def run_invoice_extraction(invoice_path: str | Path):
 # ---------- MAIN ----------
 
 if __name__ == "__main__":
-    sample_invoice = "./data/sample.pdf"
+    sample_invoice = "./data/cdw.pdf"
     asyncio.run(run_invoice_extraction(sample_invoice))
