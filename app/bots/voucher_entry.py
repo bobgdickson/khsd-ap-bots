@@ -45,6 +45,9 @@ PASSWORD = os.getenv("PEOPLESOFT_PASSWORD")
 # Vendors that require "royal style entry"
 ROYAL_STYLE_VENDORS = {"royal", "floyds"}
 
+CDW_PROMPT = """INVOICE NUMBER RULES (CDW):
+- The invoice number is ALPHANUMERIC (contains at least one letter and one digit).
+- Typical length 6–12 characters, uppercase, no spaces. Examples: AF66R7Y, AB123C45."""
 
 def get_invoices_in_data():
     data_dir = Path("data")
@@ -131,7 +134,10 @@ def voucher_playwright_bot(
                 po_input = ps_find_retry(page, "PO Number")
 
                 if invoice_data.purchase_order.startswith("KERNH"):
-                    bu, po = invoice_data.purchase_order.split("-", 1)
+                    try:
+                        bu, po = invoice_data.purchase_order.split("-", 1)
+                    except:
+                        bu, po = invoice_data.purchase_order.split("_", 1)
                 else:
                     bu = "KERNH"
                     po = invoice_data.purchase_order
@@ -238,6 +244,7 @@ def voucher_playwright_bot(
                 invoice_input = ps_find_retry(page, "Invoice Number").fill(invoice_data.invoice_number)
                 ps_target_frame(page).get_by_role("button", name="Search", exact=True).click()
                 invoice_not_found = False
+                ps_wait(page, 1)
                 try:
                     ps_target_frame(page).get_by_text(
                                     "No matching values were found"
@@ -277,7 +284,7 @@ def voucher_playwright_bot(
                 browser.close()
 
 
-def run_vendor_entry(vendor_key: str, test_mode: bool = True, rent_line: str = "FY26", attach_only: bool = False, apo_override: str = None):
+def run_vendor_entry(vendor_key: str, test_mode: bool = True, rent_line: str = "FY26", attach_only: bool = False, apo_override: str = None, additional_instructions: str = None):
     """
     Process all invoices for one vendor in a directory.
     Returns (VoucherRunLog, list[VoucherProcessLog]).
@@ -328,7 +335,7 @@ def run_vendor_entry(vendor_key: str, test_mode: bool = True, rent_line: str = "
     for invoice in invoices:
         try:
             # LLM Agent PDF Extraction
-            invoice_data = asyncio.run(run_invoice_extraction(str(invoice))).final_output
+            invoice_data = asyncio.run(run_invoice_extraction(str(invoice), additional_instructions)).final_output
             # Strip white space from PO
             invoice_data.purchase_order = invoice_data.purchase_order.strip()
             invoice_data.invoice_date = normalize_date(invoice_data.invoice_date)
@@ -552,4 +559,5 @@ if __name__ == "__main__":
     #runlog = run_vendor_entry("royal", test_mode=False, rent_line="FY26", apo_override="KERNH-APO950043J")
     #runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26")
     #runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
-    runlog = run_vendor_entry("cdw", test_mode=False, attach_only=True)
+    #runlog = run_vendor_entry("cdw", test_mode=False, attach_only=True, additional_instructions=CDW_PROMPT)
+    runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26")

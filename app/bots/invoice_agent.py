@@ -195,7 +195,11 @@ invoice_extract_agent = Agent(
         "Extract the following fields from the provided invoice document: "
         "purchase_order, invoice_number, invoice_date, total_amount, sales_tax, "
         "merchandise_amount, miscellaneous_amount, shipping_amount. "
+        "Note that merchandise_amount + sales_tax + miscellaneous_amount + shipping_amount should equal total_amount. "
+        "merchandise_amount is the subtotal before tax and fees."
         "Return only valid JSON that matches the expected format."
+        "Don't include PO prefixes like 'PO#' or 'P.O.', you can include 'KERNH-' if present."
+        "Use dashes in PO not underscores, KERNH-LN9721 instead of KERNH_LN9721"
     ),
     tools=[extract_pdf_contents],
     model="gpt-5-mini",
@@ -204,7 +208,7 @@ invoice_extract_agent = Agent(
 
 # ---------- RUNNER ----------
 
-async def run_invoice_extraction(invoice_path: str | Path):
+async def run_invoice_extraction(invoice_path: str | Path, extra_instructions: str | None = None):
     """
     Extracts invoice fields from a given PDF file using the invoice_extract_agent.
 
@@ -223,8 +227,25 @@ async def run_invoice_extraction(invoice_path: str | Path):
 
         print(f"📄 Processing: {invoice_path}")
 
+        # Build an agent, optionally appending extra instructions
+        if extra_instructions:
+            merged_instructions = (
+                invoice_extract_agent.instructions
+                + "\n\nAdditional instructions:\n"
+                + extra_instructions
+            )
+            agent = Agent(
+                name=invoice_extract_agent.name,
+                instructions=merged_instructions,
+                tools=invoice_extract_agent.tools,
+                model=invoice_extract_agent.model,
+                output_type=invoice_extract_agent.output_type,
+            )
+        else:
+            agent = invoice_extract_agent
+
         #with trace("Extracting invoice fields"):
-        result = await Runner.run(invoice_extract_agent, str(invoice_path))
+        result = await Runner.run(agent, str(invoice_path))
         #print("✅ Extraction result:")
         #print(result)
         return result
