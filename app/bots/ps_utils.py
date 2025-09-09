@@ -115,7 +115,17 @@ def handle_alerts(page) -> tuple[str | None, bool, bool]:
     alert_text = handle_peoplesoft_alert(page)
     duplicate = out_of_balance = False
     if alert_text:
-        ok_button = page.get_by_role("button", name="OK")
+        # If the alert is about missing sales tax, look for "Yes" instead of "OK"
+        if "No Sales Tax has been input" in alert_text:
+            print('Sales Tax pop up, hitting Yes')
+            ok_button = page.get_by_role("button", name="Yes")
+            ok_button.click()
+            ps_wait(page, 1)
+            alert_text = handle_peoplesoft_alert(page)
+            ok_button = page.get_by_role("button", name="OK")
+        else:
+            print('Clicking Ok to close modal')
+            ok_button = page.get_by_role("button", name="OK")
         try:
             ok_button.click()
         except Exception:

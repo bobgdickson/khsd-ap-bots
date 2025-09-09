@@ -15,6 +15,7 @@ from app.bots.ps_utils import (
     handle_modal_sequence,
 )
 from app.bots.invoice_agent import run_invoice_extraction
+from app.bots.prompts import CDW_PROMPT, CLASS_PROMPT
 from app.schemas import ExtractedInvoiceData, VoucherEntryResult, VoucherRunLog, VoucherProcessLog
 from app import models, database
 from datetime import datetime
@@ -45,9 +46,7 @@ PASSWORD = os.getenv("PEOPLESOFT_PASSWORD")
 # Vendors that require "royal style entry"
 ROYAL_STYLE_VENDORS = {"royal", "floyds"}
 
-CDW_PROMPT = """INVOICE NUMBER RULES (CDW):
-- The invoice number is ALPHANUMERIC (contains at least one letter and one digit).
-- Typical length 6–12 characters, uppercase, no spaces. Examples: AF66R7Y, AB123C45."""
+
 
 def get_invoices_in_data():
     data_dir = Path("data")
@@ -266,14 +265,14 @@ def voucher_playwright_bot(
 
             # --- Save ---
             ps_target_frame(page).locator("#VCHR_PANELS_WRK_VCHR_SAVE_PB").click()
-            ps_wait(page, 5)
+            ps_wait(page, 3)
 
             alert_text, duplicate, out_of_balance = handle_alerts(page)
             if duplicate:
                 return VoucherEntryResult(voucher_id="Duplicate", duplicate=True, out_of_balance=False)
             if out_of_balance:
                 return VoucherEntryResult(voucher_id="Out of Balance", duplicate=False, out_of_balance=True)
-
+            ps_wait(page, 3)
             voucher_id = get_voucher_id(page)
             print("Voucher ID:", voucher_id)
             return VoucherEntryResult(voucher_id=voucher_id, duplicate=False, out_of_balance=False)
@@ -427,137 +426,11 @@ def run_vendor_entry(vendor_key: str, test_mode: bool = True, rent_line: str = "
     print(f"✅ Completed run {runid}: {runlog.successes} success, {runlog.duplicates} duplicates, {runlog.failures} failures")
     return runlog
 
-    
-def test_voucher_entry():
-    print("Running test voucher entry with sample data...")
-    #Random invoice number
-    invoice = str(random.randint(1000000, 9999999))
-    test_classmobile_invoice_data = ExtractedInvoiceData(
-        purchase_order="KERNH-CON21057",
-        invoice_number=invoice,
-        invoice_date="8/1/2025",
-        total_amount=625.00,
-        sales_tax=0,
-        merchandise_amount=625.00,
-        miscellaneous_amount=0.00,
-        shipping_amount=0.00,
-    )
-    filepath = "./data/sample.pdf"
-    classmobile_result = voucher_playwright_bot(
-        test_classmobile_invoice_data,
-        filepath=filepath,
-        rent_line="FY25",
-        test_mode=True,
-        royal_style_entry=False,
-    )
-    assert classmobile_result.voucher_id not in ["Duplicate", "Out of Balance", "Invalid PO", f"No FY25 Rent Line on PO"]
-    
-    classmobile_duplicate = voucher_playwright_bot(
-        test_classmobile_invoice_data,
-        filepath=filepath,
-        rent_line="FY25",
-        test_mode=True,
-        royal_style_entry=False,
-    )
-    assert classmobile_duplicate.voucher_id == "Duplicate"
-
-    classmobile_norent = voucher_playwright_bot(
-        ExtractedInvoiceData(
-            purchase_order="KERNH-CON21057",
-            invoice_number=str(random.randint(1000000, 9999999)),
-            invoice_date="8/1/2025",
-            total_amount=625.00,
-            sales_tax=0,
-            merchandise_amount=625.00,
-            miscellaneous_amount=0.00,
-            shipping_amount=0.00,
-        ),
-        filepath=filepath,
-        rent_line="FY20",
-        test_mode=True,
-        royal_style_entry=False,      
-    )
-    assert classmobile_norent.voucher_id == "No FY20 Rent Line on PO"
-    
-    test_royalstyle_invoice_data = ExtractedInvoiceData(
-        purchase_order="KERNH-APO0001234",
-        invoice_number=str(random.randint(1000000, 9999999)),
-        invoice_date="8/1/2025",
-        total_amount=1100.00,
-        sales_tax=0,
-        merchandise_amount=1100.00,
-        miscellaneous_amount=0.00,
-        shipping_amount=0.00,
-    )
-    royalstyle_invalid_result = voucher_playwright_bot(
-        test_royalstyle_invoice_data,
-        filepath=filepath,
-        test_mode=True,
-        royal_style_entry=True,
-    )
-    assert royalstyle_invalid_result.voucher_id == "Invalid PO"
-
-    test_royalstyle_invoice_data = ExtractedInvoiceData(
-        purchase_order="KERNH-APO950043I",
-        invoice_number=str(random.randint(1000000, 9999999)),
-        invoice_date="8/1/2025",
-        total_amount=1100.00,
-        sales_tax=0,
-        merchandise_amount=1100.00,
-        miscellaneous_amount=0.00,
-        shipping_amount=0.00,
-    )
-    royalstyle_result = voucher_playwright_bot(
-        test_royalstyle_invoice_data,
-        filepath=filepath,
-        test_mode=True,
-        royal_style_entry=True,
-    )
-    assert royalstyle_result.voucher_id not in ["Duplicate", "Out of Balance", "Invalid PO", f"No FY25 Rent Line on PO"]
-    
-    cdw_result = voucher_playwright_bot(
-        ExtractedInvoiceData(
-            purchase_order="KERNH-0000220344",
-            invoice_number="AC2AL5S",
-            invoice_date="8/27/2025",
-            total_amount=625.00,
-            sales_tax=0,
-            merchandise_amount=625.00,
-            miscellaneous_amount=0.00,
-            shipping_amount=0.00,
-        ),
-        filepath = "./data/sample.pdf",
-        test_mode=True,
-        royal_style_entry=False,
-        attach_only=True,
-    )
-    assert cdw_result.voucher_id not in ["Duplicate", "Out of Balance", "Invalid PO", f"No FY25 Rent Line on PO"]
-
-    no_cdw_result = voucher_playwright_bot(
-        ExtractedInvoiceData(
-            purchase_order="KERNH-0000220344",
-            invoice_number="AC2AL5S",
-            invoice_date="8/27/2025",
-            total_amount=625.00,
-            sales_tax=0,
-            merchandise_amount=625.00,
-            miscellaneous_amount=0.00,
-            shipping_amount=0.00,
-        ),
-        filepath = "./data/sample.pdf",
-        test_mode=True,
-        royal_style_entry=False,
-        attach_only=True,
-    )
-    assert no_cdw_result.voucher_id in ["No voucher"]
 
 if __name__ == "__main__":
-    # Test runs
-    # test_voucher_entry()
-
     # PRD runs
     #runlog = run_vendor_entry("royal", test_mode=False, rent_line="FY26", apo_override="KERNH-APO950043J")
     #runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26")
     #runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
     #runlog = run_vendor_entry("cdw", test_mode=False, attach_only=True, additional_instructions=CDW_PROMPT)
-    runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26")
+    runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26", additional_instructions=CLASS_PROMPT)
