@@ -1,9 +1,9 @@
 from pathlib import Path
-import os, time, asyncio, random, shutil
+import os, time, asyncio, shutil
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from app.bots.ps_utils import (
+from app.bots.utils.ps import (
     ps_target_frame,
     ps_find_retry,
     ps_find_button,
@@ -14,50 +14,19 @@ from app.bots.ps_utils import (
     get_voucher_id,
     handle_modal_sequence,
 )
+from app.bots.utils.misc import normalize_date, generate_runid, get_invoices_in_data
 from app.bots.invoice_agent import run_invoice_extraction
-from app.bots.prompts import CDW_PROMPT, CLASS_PROMPT
+from app.bots.prompts import CDW_PROMPT, CLASS_PROMPT, MOBILE_PROMPT
 from app.schemas import ExtractedInvoiceData, VoucherEntryResult, VoucherRunLog, VoucherProcessLog
 from app import models, database
-from datetime import datetime
-from dateutil import parser
-
-def normalize_date(date_str: str) -> str:
-    """
-    Convert various date formats into mm/dd/yyyy
-    """
-    try:
-        dt = parser.parse(date_str, dayfirst=False, fuzzy=True)
-        return dt.strftime("%m/%d/%Y")
-    except Exception:
-        return None
-    
-def generate_runid(vendor_key: str, test_mode: bool = False) -> str:
-    ts = datetime.now().strftime("%m-%d-%y-%H-%M")
-    prefix = "test-" if test_mode else ""
-    return f"{prefix}{vendor_key.capitalize()}-{ts}"
 
 load_dotenv()
 
 USERNAME = os.getenv("PEOPLESOFT_USERNAME")
 PASSWORD = os.getenv("PEOPLESOFT_PASSWORD")
 
-
-
 # Vendors that require "royal style entry"
 ROYAL_STYLE_VENDORS = {"royal", "floyds"}
-
-
-
-def get_invoices_in_data():
-    data_dir = Path("data")
-    if not data_dir.exists():
-        print("Data directory does not exist. Please create it and add invoice files.")
-        return []
-    invoices = [str(file) for file in data_dir.glob("*.pdf")]
-    if not invoices:
-        print("No invoice files found in the 'data' directory.")
-    print(f"Found {len(invoices)} invoice files in 'data' directory.")
-    return invoices
 
 
 def voucher_playwright_bot(
@@ -430,7 +399,7 @@ def run_vendor_entry(vendor_key: str, test_mode: bool = True, rent_line: str = "
 if __name__ == "__main__":
     # PRD runs
     #runlog = run_vendor_entry("royal", test_mode=False, rent_line="FY26", apo_override="KERNH-APO950043J")
-    #runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26")
+    #runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26", additional_instructions=MOBILE_PROMPT)
     #runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
-    #runlog = run_vendor_entry("cdw", test_mode=False, attach_only=True, additional_instructions=CDW_PROMPT)
-    runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26", additional_instructions=CLASS_PROMPT)
+    runlog = run_vendor_entry("cdw", test_mode=False, attach_only=True, additional_instructions=CDW_PROMPT)
+    #runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26", additional_instructions=CLASS_PROMPT)

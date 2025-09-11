@@ -6,3 +6,6 @@ CDW_PROMPT = """INVOICE NUMBER RULES (CDW):
 CLASS_PROMPT = """PO NUMBER RULES (Class Leasing):
 - The PO number will often have the form of LN1234 or KERNH-LN5678
 - Typically the Lease# XXXX will match the PO as LNXXXX.  Don't include trailing zero like _0"""
+MOBILE_PROMPT = """PO NUMBER RULES (Mobile Modular):
+- The PO number will often have the form of KERNH-CON12345
+"""

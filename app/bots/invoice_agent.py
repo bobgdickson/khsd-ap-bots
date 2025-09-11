@@ -1,85 +1,15 @@
-from agents import Agent, Runner, trace, function_tool
-from pydantic import BaseModel, ValidationError
-import base64
+from agents import Agent, Runner, function_tool
+from pydantic import ValidationError
 import fitz
-import io
 import asyncio
-import os
 from dotenv import load_dotenv
 from pathlib import Path
-from app.schemas import ExtractedInvoiceData
+from app.schemas import ExtractedInvoiceData, PDFExtractionResult
+from app.bots.utils.ocr import page_pixmap, pixmap_to_pil, safe_preview_b64, preprocess_for_ocr, ocr_image, check_ocr
 
 load_dotenv()
 
-# OCR deps
-try:
-    import pytesseract
-    cmd = os.getenv("TESSERACT_CMD")
-    if cmd:
-        cmd = os.path.expandvars(cmd)  # lets you use %LOCALAPPDATA% if you prefer
-        pytesseract.pytesseract.tesseract_cmd = cmd
-    from PIL import Image, ImageOps, ImageFilter
-    _OCR_AVAILABLE = True
-except Exception:
-    _OCR_AVAILABLE = False
-
-class PDFExtractionResult(BaseModel):
-    extracted_text: str
-    image_base64: str
-    success: bool
-    description: str
-
-# ---------- helpers ----------
-
-def _page_pixmap(page, dpi: int) -> fitz.Pixmap:
-    scale = dpi / 72.0
-    return page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
-
-def _pixmap_to_pil(pix: fitz.Pixmap):
-    buf = io.BytesIO(pix.tobytes("png"))
-    from PIL import Image  # local import to avoid hard dep if not needed
-    return Image.open(buf)
-
-def _safe_preview_b64(page, dpi=140, *, max_chars=1_000_000) -> str:
-    """
-    Build an image preview guaranteed to be <= max_chars in base64 length.
-    Uses JPEG + iterative downscale if needed; returns '' if it can't fit.
-    """
-    try:
-        from PIL import Image
-        pix = _page_pixmap(page, dpi=dpi)
-        img = _pixmap_to_pil(pix).convert("RGB")
-
-        quality = 60
-        width, height = img.size
-
-        while True:
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=quality, optimize=True)
-            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-            if len(b64) <= max_chars:
-                return b64
-            # shrink & (lightly) drop quality
-            new_w = max(int(width * 0.8), 400)
-            new_h = max(int(height * 0.8), 400)
-            if (new_w, new_h) == (width, height) and quality <= 45:
-                return ""  # give up, safer to omit
-            img = img.resize((new_w, new_h), Image.LANCZOS)
-            width, height = new_w, new_h
-            if quality > 45:
-                quality -= 5
-    except Exception:
-        return ""
-
-def _preprocess_for_ocr(img):
-    from PIL import ImageOps, ImageFilter
-    g = ImageOps.grayscale(img)
-    g = ImageOps.autocontrast(g)
-    return g.filter(ImageFilter.MedianFilter(3))
-
-def _ocr_image(img, lang="eng", psm=6) -> str:
-    config = f"--oem 3 --psm {psm}"
-    return pytesseract.image_to_string(img, lang=lang, config=config)
+OCR_AVAILABLE = check_ocr()
 
 # ---------- tool ----------
 
@@ -124,7 +54,7 @@ def extract_pdf_contents(
         native_text = "\n".join(t for t in native_text_parts if t).strip()
 
         first_page = doc[0]
-        native_preview_b64 = _safe_preview_b64(
+        native_preview_b64 = safe_preview_b64(
             first_page, dpi=preview_dpi, max_chars=max_preview_b64_chars
         )
 
@@ -137,7 +67,7 @@ def extract_pdf_contents(
             )
 
         # 2) OCR fallback
-        if not (ocr_if_empty and _OCR_AVAILABLE):
+        if not (ocr_if_empty and OCR_AVAILABLE):
             return PDFExtractionResult(
                 extracted_text="",
                 image_base64=native_preview_b64,
@@ -148,10 +78,10 @@ def extract_pdf_contents(
         ocr_text_parts = []
         pages_to_ocr = min(len(doc), max_ocr_pages)
         for i in range(pages_to_ocr):
-            pix = _page_pixmap(doc[i], dpi=ocr_dpi)
-            pil_img = _pixmap_to_pil(pix)
-            pil_img = _preprocess_for_ocr(pil_img)
-            page_text = _ocr_image(pil_img, lang=ocr_lang, psm=6)
+            pix = page_pixmap(doc[i], dpi=ocr_dpi)
+            pil_img = pixmap_to_pil(pix)
+            pil_img = preprocess_for_ocr(pil_img)
+            page_text = ocr_image(pil_img, lang=ocr_lang, psm=6)
             if page_text:
                 ocr_text_parts.append(page_text)
 
@@ -159,7 +89,7 @@ def extract_pdf_contents(
 
         ocr_preview_b64 = ""
         if include_preview_on_ocr:
-            ocr_preview_b64 = _safe_preview_b64(
+            ocr_preview_b64 = safe_preview_b64(
                 first_page, dpi=preview_dpi, max_chars=max_preview_b64_chars
             )
 

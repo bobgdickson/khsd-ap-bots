@@ -30,3 +30,9 @@ class VoucherProcessLog(BaseModel):
     amount: float
     invoice: str
     status: str
+
+class PDFExtractionResult(BaseModel):
+    extracted_text: str
+    image_base64: str
+    success: bool
+    description: str
