@@ -123,6 +123,9 @@ def handle_alerts(page) -> tuple[str | None, bool, bool]:
             ps_wait(page, 1)
             alert_text = handle_peoplesoft_alert(page)
             ok_button = page.get_by_role("button", name="OK")
+        elif "wait for the process" in alert_text:
+            print('Clicking Yes for processing')
+            ok_button = page.get_by_role("button", name="Yes")
         else:
             print('Clicking Ok to close modal')
             ok_button = page.get_by_role("button", name="OK")

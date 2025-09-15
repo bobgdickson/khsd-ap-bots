@@ -10,7 +10,6 @@ from app.bots.utils.ps import (
     handle_peoplesoft_alert,
     handle_alerts,
     ps_wait,
-    find_rent_line,
     get_voucher_id,
     handle_modal_sequence,
 )
@@ -19,12 +18,33 @@ from app.bots.khedu_scholarship_agent import run_scholarship_extraction
 from app.bots.prompts import FIC_PROMPT
 from app.schemas import ScholarshipExtractedCheckAuthorization, VoucherEntryResult, VoucherRunLog, VoucherProcessLog
 from app import models, database
+import sqlalchemy
 
 load_dotenv()
 
 USERNAME = os.getenv("PEOPLESOFT_USERNAME")
 PASSWORD = os.getenv("PEOPLESOFT_PASSWORD")
 
+def run_raw_sql() -> str:
+    db_url = os.getenv("PS_DB_URL")
+    # Subquery to get the highest voucher_id for KHEDU
+    query = """
+    SELECT CHARTFIELD2
+    FROM PS_VCHR_ACCTG_LINE
+    WHERE BUSINESS_UNIT = 'KHEDU'
+      AND VOUCHER_ID = (
+          SELECT MAX(VOUCHER_ID)
+          FROM PS_VCHR_ACCTG_LINE
+          WHERE BUSINESS_UNIT = 'KHEDU'
+      )
+      AND DST_ACCT_TYPE = 'DST'
+    """
+    engine = sqlalchemy.create_engine(db_url)
+    with engine.connect() as conn:
+        result = conn.execute(sqlalchemy.text(query))
+        rows = result.fetchall()
+        #print(rows)
+        return str(rows[0][0])
 
 def scholarship_playwright_bot(
     scholarship_data: ScholarshipExtractedCheckAuthorization,
@@ -67,16 +87,42 @@ def scholarship_playwright_bot(
             page.click('input[type="submit"]')
             page.wait_for_load_state("networkidle")
 
+            # Look for latest Goal code in a voucher and correct history on next one to rename to payee
+            page.goto(
+                PS_BASE_URL
+                + "/EMPLOYEE/ERP/c/DESIGN_CHARTFIELDS.FS_CF_VALUE_HOME.GBL"
+            )
+            page.wait_for_load_state("networkidle")
+            
+            ps_target_frame(page).get_by_role("link", name="Goal").click()
+            page.wait_for_load_state("networkidle")
+            ps_target_frame(page).get_by_role("textbox", name="SetID").fill("KHEDU")
+            latest_goal_code = run_raw_sql()
+            if latest_goal_code == "999":
+                goal_code = "100"
+            else:
+                goal_code = str(int(latest_goal_code) + 1)
+            ps_target_frame(page).get_by_role("textbox", name="Goal").fill(goal_code)
+            ps_target_frame(page).get_by_role("button", name="Search", exact=True).click()
+            page.wait_for_load_state("networkidle")
+            ps_target_frame(page).get_by_role("button", name="Correct History").click()
+            page.wait_for_load_state("networkidle")
+            ps_target_frame(page).locator("[id=\"CHARTFIELD2_TBL_EFFDT$0\"]").fill("t")
+            page.keyboard.press("Tab")
+            page.wait_for_load_state("networkidle")
+            ps_target_frame(page).locator("[id=\"CHARTFIELD2_TBL_DESCR$0\"]").fill(scholarship_data.name)
+            short_descr = scholarship_data.invoice_number.split(" ")[0]
+            ps_target_frame(page).locator("[id=\"CHARTFIELD2_TBL_DESCRSHORT$0\"]").fill(short_descr)
+            ps_target_frame(page).get_by_role("button", name="Save")
+            page.wait_for_load_state("networkidle")
+            
+            # Full Voucher Entry Flow
+            # --- Voucher Entry Fields ---
             page.goto(
                 PS_BASE_URL
                 + "/EMPLOYEE/ERP/c/ENTER_VOUCHER_INFORMATION.VCHR_EXPRESS.GBL"
             )
             page.wait_for_load_state("networkidle")
-            
-            #TODO: Update latest goal code to use recipient name, set goal_code to that for use in entry
-
-            # Full Voucher Entry Flow
-            # --- Voucher Entry Fields ---
             bu = ps_target_frame(page).get_by_role("textbox", name="Business Unit", exact=True)
             bu.focus()
             bu.fill("KHEDU")
@@ -113,11 +159,10 @@ def scholarship_playwright_bot(
             ps_target_frame(page).get_by_role("tab", name="Invoice Information").click()
             ps_target_frame(page).locator("[id=\"FUND_CODE$0\"]").fill("01")
             ps_target_frame(page).locator("[id=\"PROGRAM_CODE$0\"]").fill(scholarship_resource)
-            # TODO: Change to use goal_code from above once implemented
-            ps_target_frame(page).locator("[id=\"CHARTFIELD2$0\"]").fill("806")
+            ps_target_frame(page).locator("[id=\"CHARTFIELD2$0\"]").fill(goal_code)
             ps_target_frame(page).locator("[id=\"CHARTFIELD3$0\"]").fill("100")
             ps_target_frame(page).locator("[id=\"ACCOUNT$0\"]").fill("500")
-            page.pause()
+
             # --- Attachments ---
             ps_target_frame(page).get_by_role("link", name="Attachments").click()
             page.wait_for_load_state("networkidle")
@@ -134,11 +179,21 @@ def scholarship_playwright_bot(
                 return VoucherEntryResult(voucher_id="Duplicate", duplicate=True, out_of_balance=False)
             if out_of_balance:
                 return VoucherEntryResult(voucher_id="Out of Balance", duplicate=False, out_of_balance=True)
-            ps_wait(page, 3)
+            ps_wait(page, 1)
             voucher_id = get_voucher_id(page)
             print("Voucher ID:", voucher_id)
-            return VoucherEntryResult(voucher_id=voucher_id, duplicate=False, out_of_balance=False)
+            
 
+            # --- Voucher Post, Journal Generate
+            for key in ["Tab", "v", "Tab", "Enter"]:
+                page.keyboard.press(key)
+                ps_wait(page, 0.33)
+
+                
+            page.pause()
+            
+            # --- Return entry result
+            return VoucherEntryResult(voucher_id=voucher_id, duplicate=False, out_of_balance=False)
         finally:
             if "browser" in locals():
                 print("Closing browser...")
@@ -163,7 +218,7 @@ def run_scholarship_entry(scholarship_key: str, test_mode: bool = True, addition
         VENDOR_DIRS = {
             "fic": "fic",
         }
-        #TODO: Build resource lookup table for various scholarships
+    #TODO: Build resource lookup table for various scholarships
     scholarship_resource = '363'
     vendor_path = Path(base_dir) / VENDOR_DIRS[scholarship_key]
     if not vendor_path.exists():
@@ -293,3 +348,4 @@ if __name__ == "__main__":
     #runlog = run_vendor_entry("cdw", test_mode=False, attach_only=True, additional_instructions=CDW_PROMPT)
     #runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26", additional_instructions=CLASS_PROMPT)
     print(test())
+    #runlog = run_scholarship_entry("fic", test_mode=True, additional_instructions=FIC_PROMPT)
