@@ -1,0 +1,295 @@
+from pathlib import Path
+import os, time, asyncio, shutil
+from dotenv import load_dotenv
+from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from app.bots.utils.ps import (
+    ps_target_frame,
+    ps_find_retry,
+    ps_find_button,
+    handle_peoplesoft_alert,
+    handle_alerts,
+    ps_wait,
+    find_rent_line,
+    get_voucher_id,
+    handle_modal_sequence,
+)
+from app.bots.utils.misc import normalize_date, generate_runid, get_invoices_in_data
+from app.bots.khedu_scholarship_agent import run_scholarship_extraction
+from app.bots.prompts import FIC_PROMPT
+from app.schemas import ScholarshipExtractedCheckAuthorization, VoucherEntryResult, VoucherRunLog, VoucherProcessLog
+from app import models, database
+
+load_dotenv()
+
+USERNAME = os.getenv("PEOPLESOFT_USERNAME")
+PASSWORD = os.getenv("PEOPLESOFT_PASSWORD")
+
+
+def scholarship_playwright_bot(
+    scholarship_data: ScholarshipExtractedCheckAuthorization,
+    scholarship_resource: str,
+    filepath: str = None,
+    test_mode: bool = False,
+) -> VoucherEntryResult:
+
+    if test_mode:
+        PS_BASE_URL = (
+            os.getenv("PEOPLESOFT_TEST_ENV", "https://kdfq92.hosted.cherryroad.com/")
+            + "psp/KDFQ92"
+        )
+        print(f"Running in TEST mode against {PS_BASE_URL}")
+    else:
+        PS_BASE_URL = os.getenv("PEOPLESOFT_ENV") + "psp/KDFP92"
+        print(f"Running in PRODUCTION mode against {PS_BASE_URL}")
+
+    if not scholarship_data:
+        print("No scholarship data provided, exiting.")
+        return
+
+    print(f"Extracted data for: {scholarship_data}")
+
+    with sync_playwright() as p:
+        print("Starting PeopleSoft voucher entry bot...")
+        try:
+            # --- Login ---
+            browser = p.chromium.launch(headless=False)
+            page = browser.new_page()
+            page.set_viewport_size({"width": 1920, "height": 1080})
+            page.goto(PS_BASE_URL)
+
+            page.wait_for_selector("input#i0116")
+            page.fill("input#i0116", USERNAME)
+            page.click('input[type="submit"]')
+
+            page.wait_for_selector("input#i0118")
+            page.fill("input#i0118", PASSWORD)
+            page.click('input[type="submit"]')
+            page.wait_for_load_state("networkidle")
+
+            page.goto(
+                PS_BASE_URL
+                + "/EMPLOYEE/ERP/c/ENTER_VOUCHER_INFORMATION.VCHR_EXPRESS.GBL"
+            )
+            page.wait_for_load_state("networkidle")
+            
+            #TODO: Update latest goal code to use recipient name, set goal_code to that for use in entry
+
+            # Full Voucher Entry Flow
+            # --- Voucher Entry Fields ---
+            bu = ps_target_frame(page).get_by_role("textbox", name="Business Unit", exact=True)
+            bu.focus()
+            bu.fill("KHEDU")
+            for key in ["Tab", "Tab", "s"]:
+                page.keyboard.press(key)
+                ps_wait(page, 0.33)
+            
+            ps_find_retry(page, "Supplier ID").fill("0000000001")
+            page.keyboard.press("Tab")
+            ps_wait(page, 0.33)
+            ps_find_retry(page, "Invoice Number").fill(scholarship_data.invoice_number)
+            ps_find_retry(page, "Invoice Date").fill("T")
+            ps_find_retry(page, "Gross Invoice Amount").fill(
+                str(scholarship_data.amount)
+            )
+            ps_target_frame(page).get_by_role("checkbox", name="Tax Exempt Flag").check()
+
+            ps_target_frame(page).get_by_role("button", name="Add", exact=True).click()
+            page.wait_for_load_state("networkidle")
+            ps_wait(page, 1)
+            
+            # --- Handle Alert ---
+            alert_text = handle_peoplesoft_alert(page)
+            if alert_text and "Invalid value" in alert_text:
+                return VoucherEntryResult(voucher_id="Invalid PO", duplicate=False, out_of_balance=False)
+      
+            # --- Scholarship Entry
+            ps_find_retry(page, "Supplier Name").fill(scholarship_data.name)
+            ps_target_frame(page).locator("#VCHR_VNDR_INFO_ADDRESS1").fill("5801 Sundale Ave")
+            ps_target_frame(page).locator("#VCHR_VNDR_INFO_CITY").fill("Bakersfield")
+            ps_target_frame(page).locator("#VCHR_VNDR_INFO_COUNTY").fill("Kern")
+            ps_target_frame(page).locator("#VCHR_VNDR_INFO_STATE").fill("CA")
+            ps_target_frame(page).locator("#VCHR_VNDR_INFO_POSTAL").fill("93309")
+            ps_target_frame(page).get_by_role("tab", name="Invoice Information").click()
+            ps_target_frame(page).locator("[id=\"FUND_CODE$0\"]").fill("01")
+            ps_target_frame(page).locator("[id=\"PROGRAM_CODE$0\"]").fill(scholarship_resource)
+            # TODO: Change to use goal_code from above once implemented
+            ps_target_frame(page).locator("[id=\"CHARTFIELD2$0\"]").fill("806")
+            ps_target_frame(page).locator("[id=\"CHARTFIELD3$0\"]").fill("100")
+            ps_target_frame(page).locator("[id=\"ACCOUNT$0\"]").fill("500")
+            page.pause()
+            # --- Attachments ---
+            ps_target_frame(page).get_by_role("link", name="Attachments").click()
+            page.wait_for_load_state("networkidle")
+            handle_modal_sequence(
+                page, ["Add Attachment", "Browse", "Upload", "OK"], file=str(Path(filepath).resolve())
+            )
+
+            # --- Save ---
+            ps_target_frame(page).locator("#VCHR_PANELS_WRK_VCHR_SAVE_PB").click()
+            ps_wait(page, 3)
+
+            alert_text, duplicate, out_of_balance = handle_alerts(page)
+            if duplicate:
+                return VoucherEntryResult(voucher_id="Duplicate", duplicate=True, out_of_balance=False)
+            if out_of_balance:
+                return VoucherEntryResult(voucher_id="Out of Balance", duplicate=False, out_of_balance=True)
+            ps_wait(page, 3)
+            voucher_id = get_voucher_id(page)
+            print("Voucher ID:", voucher_id)
+            return VoucherEntryResult(voucher_id=voucher_id, duplicate=False, out_of_balance=False)
+
+        finally:
+            if "browser" in locals():
+                print("Closing browser...")
+                browser.close()
+
+
+def run_scholarship_entry(scholarship_key: str, test_mode: bool = True, additional_instructions: str = None):
+    """
+    Process all invoices for one scholarship in a directory.
+    Returns (VoucherRunLog, list[VoucherProcessLog]).
+    """
+    t0 = time.time()
+    if test_mode:
+        base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents\InvoiceProcessing"
+        # Directory mapping (folder names → scholarship_key)
+        VENDOR_DIRS = {
+            "fic": "fic",
+        }
+    else:
+        base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents\InvoiceProcessing"
+        # Directory mapping (folder names → scholarship_key)
+        VENDOR_DIRS = {
+            "fic": "fic",
+        }
+        #TODO: Build resource lookup table for various scholarships
+    scholarship_resource = '363'
+    vendor_path = Path(base_dir) / VENDOR_DIRS[scholarship_key]
+    if not vendor_path.exists():
+        raise RuntimeError(f"Vendor directory {vendor_path} not found")
+
+    invoices = list(vendor_path.glob("*.pdf"))
+    if not invoices:
+        print(f"No invoices found in {vendor_path}")
+        return None, []
+
+    runid = generate_runid(scholarship_key, test_mode)
+    runlog = VoucherRunLog(runid=runid, vendor=scholarship_key)
+    process_logs: list[VoucherProcessLog] = []
+
+    processed_dir = vendor_path / "Processed"
+    notprocessed_dir = vendor_path / "NotProcessed"
+    processed_dir.mkdir(exist_ok=True)
+    notprocessed_dir.mkdir(exist_ok=True)
+
+    print(f"\n🚀 Starting run {runid} with {len(invoices)} scholarships from {vendor_path}")
+
+    for invoice in invoices:
+        try:
+            # LLM Agent PDF Extraction
+            scholarship_data = asyncio.run(run_scholarship_extraction(str(invoice), additional_instructions)).final_output
+            if not scholarship_data:
+                print(f"❌ Failed extraction: {invoice.name}")
+                runlog.failures += 1
+                process_logs.append(
+                    VoucherProcessLog(
+                        runid=runid,
+                        filename=invoice.name,
+                        voucher_id="Extraction Failed",
+                        amount=0.0,
+                        invoice="",
+                        status="failure",
+                    )
+                )
+                continue
+
+            result = scholarship_playwright_bot(
+                scholarship_data,
+                scholarship_resource,
+                filepath=str(invoice),
+                test_mode=test_mode,
+            )
+
+            runlog.processed += 1
+            
+            # Move files
+            if result.duplicate:
+                runlog.duplicates += 1
+                status = "duplicate"
+                voucher_id = "Duplicate"
+                print(f"Moving duplicate invoice {invoice.name} to NotProcessed.")
+                shutil.move(str(invoice), notprocessed_dir / invoice.name)
+            elif result.voucher_id.isdigit():
+                runlog.successes += 1
+                status = "success"
+                voucher_id = result.voucher_id
+                print(f"Moving entered invoice {invoice.name} to Processed.")
+                shutil.move(str(invoice), processed_dir / invoice.name)
+            else:
+                runlog.failures += 1
+                status = "failure"
+                voucher_id = result.voucher_id
+                print(f"Not moving failed invoice {invoice.name}.")
+                # leave file in place
+            
+            process_log = VoucherProcessLog(
+                runid=runid,
+                filename=invoice.name,
+                voucher_id=voucher_id,
+                amount=scholarship_data.amount,
+                invoice=scholarship_data.invoice_number,
+                status=status,
+            )
+            
+        except Exception as e:
+            print(f"💥 Error processing {invoice.name}: {e}")
+            runlog.failures += 1
+            VoucherProcessLog(
+                runid=runid,
+                filename=invoice.name,
+                voucher_id="Error",
+                amount=0.0,
+                invoice="",
+                status="failure",
+            )
+
+
+        # Write to DB
+        print(process_log)
+        db = database.SessionLocal()
+        try:
+                payload = process_log.model_dump()
+                orm_row = models.APBotProcessLog(**payload)
+                db.add(orm_row)
+                db.commit()
+                print("Logged to database.")
+        finally:
+            db.close()
+
+    t1 = time.time()
+    print(f"Average time per invoice: {(t1 - t0) / len(invoices):.2f} seconds.")
+    print(f"✅ Completed run {runid}: {runlog.successes} success, {runlog.duplicates} duplicates, {runlog.failures} failures")
+    return runlog
+
+def test():
+    scholarship_data = ScholarshipExtractedCheckAuthorization(
+        name="KARISSA RODRIGUEZ",
+        amount=500.0,
+        invoice_number="KRODRIGUEZ FIC"
+    )
+    filepath = "./data/edu_test.pdf"
+    fic_result = scholarship_playwright_bot(scholarship_data=scholarship_data,
+                                            scholarship_resource='363',
+                                            filepath=filepath, 
+                                            test_mode=True)
+    return fic_result
+
+if __name__ == "__main__":
+    # PRD runs
+    #runlog = run_vendor_entry("royal", test_mode=False, rent_line="FY26", apo_override="KERNH-APO950043J")
+    #runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26", additional_instructions=MOBILE_PROMPT)
+    #runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
+    #runlog = run_vendor_entry("cdw", test_mode=False, attach_only=True, additional_instructions=CDW_PROMPT)
+    #runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26", additional_instructions=CLASS_PROMPT)
+    print(test())

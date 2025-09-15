@@ -9,3 +9,4 @@ CLASS_PROMPT = """PO NUMBER RULES (Class Leasing):
 MOBILE_PROMPT = """PO NUMBER RULES (Mobile Modular):
 - The PO number will often have the form of KERNH-CON12345
 """
+FIC_PROMPT = """Scholarship Type: FIC"""

@@ -36,3 +36,8 @@ class PDFExtractionResult(BaseModel):
     image_base64: str
     success: bool
     description: str
+
+class ScholarshipExtractedCheckAuthorization(BaseModel):
+    name: str
+    amount: float
+    invoice_number: str
