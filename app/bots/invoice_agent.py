@@ -122,6 +122,7 @@ invoice_extract_agent = Agent(
     name="Invoice Extract Agent",
     instructions=(
         "You are an invoice extraction agent. "
+        "Use the tool to extract raw data from the document."
         "Extract the following fields from the provided invoice document: "
         "purchase_order, invoice_number, invoice_date, total_amount, sales_tax, "
         "merchandise_amount, miscellaneous_amount, shipping_amount. "
