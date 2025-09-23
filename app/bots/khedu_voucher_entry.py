@@ -73,7 +73,7 @@ def scholarship_playwright_bot(
         print("Starting PeopleSoft voucher entry bot...")
         try:
             # --- Login ---
-            browser = p.chromium.launch(headless=False)
+            browser = p.chromium.launch_persistent_context("user_data", headless=False)
             page = browser.new_page()
             page.set_viewport_size({"width": 1920, "height": 1080})
             page.goto(PS_BASE_URL)
@@ -101,11 +101,17 @@ def scholarship_playwright_bot(
             if latest_goal_code == "999":
                 goal_code = "100"
             else:
-                goal_code = str(int(latest_goal_code) + 1)
+                try:
+                    goal_code = str(int(latest_goal_code) + 1)
+                except (TypeError, ValueError):
+                    print(f"Invalid latest_goal_code: {latest_goal_code}, defaulting to 100")
+                    goal_code = "100"
+                print(goal_code)
             ps_target_frame(page).get_by_role("textbox", name="Goal").fill(goal_code)
             ps_target_frame(page).get_by_role("button", name="Search", exact=True).click()
-            page.wait_for_load_state("networkidle")
+            ps_wait(page, 1)
             ps_target_frame(page).get_by_role("button", name="Correct History").click()
+            ps_wait(page, 1)
             page.wait_for_load_state("networkidle")
             ps_target_frame(page).locator("[id=\"CHARTFIELD2_TBL_EFFDT$0\"]").fill("t")
             page.keyboard.press("Tab")
@@ -113,8 +119,11 @@ def scholarship_playwright_bot(
             ps_target_frame(page).locator("[id=\"CHARTFIELD2_TBL_DESCR$0\"]").fill(scholarship_data.name)
             short_descr = scholarship_data.invoice_number.split(" ")[0]
             ps_target_frame(page).locator("[id=\"CHARTFIELD2_TBL_DESCRSHORT$0\"]").fill(short_descr)
-            ps_target_frame(page).get_by_role("button", name="Save")
+            ps_target_frame(page).get_by_role("button", name="Save").click()
+            page.pause()
+            ps_wait(page, 1)
             page.wait_for_load_state("networkidle")
+            page.pause()
             
             # Full Voucher Entry Flow
             # --- Voucher Entry Fields ---
@@ -122,13 +131,15 @@ def scholarship_playwright_bot(
                 PS_BASE_URL
                 + "/EMPLOYEE/ERP/c/ENTER_VOUCHER_INFORMATION.VCHR_EXPRESS.GBL"
             )
+            
             page.wait_for_load_state("networkidle")
             bu = ps_target_frame(page).get_by_role("textbox", name="Business Unit", exact=True)
             bu.focus()
             bu.fill("KHEDU")
-            for key in ["Tab", "Tab", "s"]:
-                page.keyboard.press(key)
-                ps_wait(page, 0.33)
+            ps_target_frame(page).get_by_label("Voucher Style").select_option(value="Single Payment Voucher")
+            
+            #page.keyboard.press("s")
+            ps_wait(page, 0.33)
             
             ps_find_retry(page, "Supplier ID").fill("0000000001")
             page.keyboard.press("Tab")
@@ -148,6 +159,8 @@ def scholarship_playwright_bot(
             alert_text = handle_peoplesoft_alert(page)
             if alert_text and "Invalid value" in alert_text:
                 return VoucherEntryResult(voucher_id="Invalid PO", duplicate=False, out_of_balance=False)
+            elif alert_text and "duplicate" in alert_text:
+                return VoucherEntryResult(voucher_id="Duplicate", duplicate=True, out_of_balance=False)
       
             # --- Scholarship Entry
             ps_find_retry(page, "Supplier Name").fill(scholarship_data.name)
@@ -162,13 +175,14 @@ def scholarship_playwright_bot(
             ps_target_frame(page).locator("[id=\"CHARTFIELD2$0\"]").fill(goal_code)
             ps_target_frame(page).locator("[id=\"CHARTFIELD3$0\"]").fill("100")
             ps_target_frame(page).locator("[id=\"ACCOUNT$0\"]").fill("500")
-
+            
+            
             # --- Attachments ---
-            ps_target_frame(page).get_by_role("link", name="Attachments").click()
-            page.wait_for_load_state("networkidle")
-            handle_modal_sequence(
-                page, ["Add Attachment", "Browse", "Upload", "OK"], file=str(Path(filepath).resolve())
-            )
+            #ps_target_frame(page).get_by_role("link", name="Attachments").click()
+            #page.wait_for_load_state("networkidle")
+            #handle_modal_sequence(
+                #page, ["Add Attachment", "Browse", "Upload", "OK"], file=str(Path(filepath).resolve())
+            #)
 
             # --- Save ---
             ps_target_frame(page).locator("#VCHR_PANELS_WRK_VCHR_SAVE_PB").click()
@@ -182,16 +196,41 @@ def scholarship_playwright_bot(
             ps_wait(page, 1)
             voucher_id = get_voucher_id(page)
             print("Voucher ID:", voucher_id)
-            
-
-            # --- Voucher Post, Journal Generate
-            for key in ["Tab", "v", "Tab", "Enter"]:
-                page.keyboard.press(key)
-                ps_wait(page, 0.33)
-
-                
             page.pause()
+            # --- Voucher Post, Journal Generate
+            ps_target_frame(page).get_by_label("Action").select_option(value="Voucher Post")
+            ps_target_frame(page).get_by_role("button", name="Run").click()
+            ps_wait(page, 1)
+            ok_button = page.get_by_role("button", name="Yes")
+            ok_button.click()
+            ps_wait(page, 10)
+            try:
+                ps_target_frame(page).get_by_label("Action").select_option(value="Journal Generate")
+            except:
+                ps_wait(page, 5)
+            page.pause()
+            ps_target_frame(page).get_by_label("Action").select_option(value="Journal Generate")
+            ps_target_frame(page).get_by_role("button", name="Run").click()
+            page.pause()
+            ok_button = page.get_by_role("button", name="Yes")
+            ok_button.click()
+            ps_wait(page, 5)
+
+
+            # Payments 
+            ps_target_frame(page).get_by_role("tab", name="Payments").click()
+            page.wait_for_load_state("networkidle")
+            ps_target_frame(page).get_by_role("link", name="Express Payment").click()
+            page.wait_for_load_state("networkidle")
+            ps_target_frame(page).get_by_role("button", name="Create Payment").click()
+            page.wait_for_load_state("networkidle")
+            page.pause()
+            ps_target_frame(page).get_by_role("button", name="Refresh").click()
+            ps_wait(page, 4)
+            ps_target_frame(page).get_by_role("button", name="Process")
             
+            page.pause()
+
             # --- Return entry result
             return VoucherEntryResult(voucher_id=voucher_id, duplicate=False, out_of_balance=False)
         finally:
@@ -328,10 +367,11 @@ def run_scholarship_entry(scholarship_key: str, test_mode: bool = True, addition
     return runlog
 
 def test():
+    import random
     scholarship_data = ScholarshipExtractedCheckAuthorization(
         name="KARISSA RODRIGUEZ",
         amount=500.0,
-        invoice_number="KRODRIGUEZ FIC"
+        invoice_number= str(random.randint(1000000, 9999999))
     )
     filepath = "./data/edu_test.pdf"
     fic_result = scholarship_playwright_bot(scholarship_data=scholarship_data,
