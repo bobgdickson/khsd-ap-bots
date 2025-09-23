@@ -205,11 +205,11 @@ def voucher_playwright_bot(
                 print("Attach-only mode")
                 ps_find_button(page, "Find an Existing Value Find").click()
                 ps_wait(page, 1)
-                user_input = ps_find_retry(page, "User ID").focus()
+                ps_find_retry(page, "User ID").focus()
                 for key in ["Tab", "c", "Tab"]:
                     page.keyboard.press(key)
                     ps_wait(page, 1)
-                invoice_input = ps_find_retry(page, "Invoice Number").fill(invoice_data.invoice_number)
+                ps_find_retry(page, "Invoice Number").fill(invoice_data.invoice_number)
                 ps_target_frame(page).get_by_role("button", name="Search", exact=True).click()
                 invoice_not_found = False
                 ps_wait(page, 1)
@@ -222,6 +222,9 @@ def voucher_playwright_bot(
                     return VoucherEntryResult(voucher_id="No voucher", duplicate=False, out_of_balance=False)
                 except PlaywrightTimeoutError:
                     print("Invoice found, proceeding with attachment.")
+                    alert_text = handle_peoplesoft_alert(page)
+                    if alert_text:
+                        page.get_by_role("button", name="OK").click()
                     ps_target_frame(page).get_by_role("tab", name="Invoice Information").click()
                     ps_wait(page, 1)
 
