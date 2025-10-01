@@ -29,21 +29,26 @@ def run_raw_sql() -> str:
     db_url = os.getenv("PS_DB_URL")
     # Subquery to get the highest voucher_id for KHEDU
     query = """
+   WITH latest_voucher AS (
+   SELECT MAX(VOUCHER_ID) AS VOUCHER_ID
+   FROM PS_VCHR_ACCTG_LINE
+   WHERE BUSINESS_UNIT = 'KHEDU'
+     AND DST_ACCT_TYPE = 'DST'
+     AND CHARTFIELD2 <> '000'
+    )
     SELECT CHARTFIELD2
-    FROM PS_VCHR_ACCTG_LINE
-    WHERE BUSINESS_UNIT = 'KHEDU'
-      AND VOUCHER_ID = (
-          SELECT MAX(VOUCHER_ID)
-          FROM PS_VCHR_ACCTG_LINE
-          WHERE BUSINESS_UNIT = 'KHEDU'
-      )
-      AND DST_ACCT_TYPE = 'DST'
+    FROM PS_VCHR_ACCTG_LINE l
+    JOIN latest_voucher v
+    ON l.VOUCHER_ID = v.VOUCHER_ID
+    WHERE l.BUSINESS_UNIT = 'KHEDU'
+    AND l.DST_ACCT_TYPE = 'DST'
+    AND l.CHARTFIELD2 <> '000';
     """
     engine = sqlalchemy.create_engine(db_url)
     with engine.connect() as conn:
         result = conn.execute(sqlalchemy.text(query))
         rows = result.fetchall()
-        #print(rows)
+        print(rows)
         return str(rows[0][0])
 
 def scholarship_playwright_bot(
@@ -116,14 +121,14 @@ def scholarship_playwright_bot(
             ps_target_frame(page).locator("[id=\"CHARTFIELD2_TBL_EFFDT$0\"]").fill("t")
             page.keyboard.press("Tab")
             page.wait_for_load_state("networkidle")
-            ps_target_frame(page).locator("[id=\"CHARTFIELD2_TBL_DESCR$0\"]").fill(scholarship_data.name)
+            ps_target_frame(page).locator("[id=\"CHARTFIELD2_TBL_DESCR$0\"]").fill(scholarship_data.name.upper())
             short_descr = scholarship_data.invoice_number.split(" ")[0]
             ps_target_frame(page).locator("[id=\"CHARTFIELD2_TBL_DESCRSHORT$0\"]").fill(short_descr)
             ps_target_frame(page).get_by_role("button", name="Save").click()
-            page.pause()
+            #page.pause()
             ps_wait(page, 1)
             page.wait_for_load_state("networkidle")
-            page.pause()
+            #page.pause()
             
             # Full Voucher Entry Flow
             # --- Voucher Entry Fields ---
@@ -143,7 +148,7 @@ def scholarship_playwright_bot(
             
             ps_find_retry(page, "Supplier ID").fill("0000000001")
             page.keyboard.press("Tab")
-            ps_wait(page, 0.33)
+            ps_wait(page, 1)
             ps_find_retry(page, "Invoice Number").fill(scholarship_data.invoice_number)
             ps_find_retry(page, "Invoice Date").fill("T")
             ps_find_retry(page, "Gross Invoice Amount").fill(
@@ -163,10 +168,10 @@ def scholarship_playwright_bot(
                 return VoucherEntryResult(voucher_id="Duplicate", duplicate=True, out_of_balance=False)
       
             # --- Scholarship Entry
-            ps_find_retry(page, "Supplier Name").fill(scholarship_data.name)
-            ps_target_frame(page).locator("#VCHR_VNDR_INFO_ADDRESS1").fill("5801 Sundale Ave")
-            ps_target_frame(page).locator("#VCHR_VNDR_INFO_CITY").fill("Bakersfield")
-            ps_target_frame(page).locator("#VCHR_VNDR_INFO_COUNTY").fill("Kern")
+            ps_find_retry(page, "Supplier Name").fill(scholarship_data.name.upper())
+            ps_target_frame(page).locator("#VCHR_VNDR_INFO_ADDRESS1").fill("5801 SUNDALE AVE")
+            ps_target_frame(page).locator("#VCHR_VNDR_INFO_CITY").fill("BAKERSFIELD")
+            ps_target_frame(page).locator("#VCHR_VNDR_INFO_COUNTY").fill("KERN")
             ps_target_frame(page).locator("#VCHR_VNDR_INFO_STATE").fill("CA")
             ps_target_frame(page).locator("#VCHR_VNDR_INFO_POSTAL").fill("93309")
             ps_target_frame(page).get_by_role("tab", name="Invoice Information").click()
@@ -196,7 +201,7 @@ def scholarship_playwright_bot(
             ps_wait(page, 1)
             voucher_id = get_voucher_id(page)
             print("Voucher ID:", voucher_id)
-            page.pause()
+            #page.pause()
             # --- Voucher Post, Journal Generate
             ps_target_frame(page).get_by_label("Action").select_option(value="Voucher Post")
             ps_target_frame(page).get_by_role("button", name="Run").click()
@@ -208,28 +213,33 @@ def scholarship_playwright_bot(
                 ps_target_frame(page).get_by_label("Action").select_option(value="Journal Generate")
             except:
                 ps_wait(page, 5)
-            page.pause()
+            #page.pause()
             ps_target_frame(page).get_by_label("Action").select_option(value="Journal Generate")
             ps_target_frame(page).get_by_role("button", name="Run").click()
-            page.pause()
+            
             ok_button = page.get_by_role("button", name="Yes")
             ok_button.click()
             ps_wait(page, 5)
 
+            #page.pause()
 
             # Payments 
             ps_target_frame(page).get_by_role("tab", name="Payments").click()
             page.wait_for_load_state("networkidle")
             ps_target_frame(page).get_by_role("link", name="Express Payment").click()
-            page.wait_for_load_state("networkidle")
+            ps_wait(page, 2)
             ps_target_frame(page).get_by_role("button", name="Create Payment").click()
-            page.wait_for_load_state("networkidle")
-            page.pause()
+            ps_wait(page, 10)
             ps_target_frame(page).get_by_role("button", name="Refresh").click()
-            ps_wait(page, 4)
-            ps_target_frame(page).get_by_role("button", name="Process")
+            try:
+                ps_target_frame(page).get_by_role("button", name="Process").click()
+            except PlaywrightTimeoutError:
+                ps_wait(page, 5)
+                ps_target_frame(page).get_by_role("button", name="Refresh").click()
+                ps_wait(page, 1)
+                ps_target_frame(page).get_by_role("button", name="Process").click()
             
-            page.pause()
+            #page.pause()
 
             # --- Return entry result
             return VoucherEntryResult(voucher_id=voucher_id, duplicate=False, out_of_balance=False)
@@ -246,16 +256,16 @@ def run_scholarship_entry(scholarship_key: str, test_mode: bool = True, addition
     """
     t0 = time.time()
     if test_mode:
-        base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents\InvoiceProcessing"
+        base_dir = r"C:\Users\lovkarn_riar\OneDrive - Kern High School District\KHEDU 26\ED FOUNDATION\TEST"
         # Directory mapping (folder names → scholarship_key)
         VENDOR_DIRS = {
-            "fic": "fic",
+            "FIC": "FIC",
         }
     else:
-        base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents\InvoiceProcessing"
+        base_dir = r"C:\Users\lovkarn_riar\OneDrive - Kern High School District\KHEDU 26\ED FOUNDATION\PROCESSING"
         # Directory mapping (folder names → scholarship_key)
         VENDOR_DIRS = {
-            "fic": "fic",
+            "FIC": "FIC",
         }
     #TODO: Build resource lookup table for various scholarships
     scholarship_resource = '363'
@@ -387,5 +397,5 @@ if __name__ == "__main__":
     #runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
     #runlog = run_vendor_entry("cdw", test_mode=False, attach_only=True, additional_instructions=CDW_PROMPT)
     #runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26", additional_instructions=CLASS_PROMPT)
-    print(test())
-    #runlog = run_scholarship_entry("fic", test_mode=True, additional_instructions=FIC_PROMPT)
+    #print(test())
+    runlog = run_scholarship_entry("FIC", test_mode=False, additional_instructions=FIC_PROMPT)
