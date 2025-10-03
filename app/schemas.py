@@ -41,3 +41,11 @@ class ScholarshipExtractedCheckAuthorization(BaseModel):
     name: str
     amount: float
     invoice_number: str
+
+class KheduJournalExtractedData(BaseModel):
+    name: str
+    amount: float
+    journal_type: str
+    description: str
+    source_account: str
+    destination_account: str
