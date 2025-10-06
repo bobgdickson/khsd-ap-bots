@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   ChartBar,
   Banknote,
+  BotIcon,
   Gauge,
   type LucideIcon,
 } from "lucide-react";
@@ -48,20 +49,9 @@ export const sidebarItems: NavGroup[] = [
         icon: LayoutDashboard,
       },
       {
-        title: "CRM",
-        url: "/dashboard/crm",
-        icon: ChartBar,
-      },
-      {
-        title: "Finance",
-        url: "/dashboard/finance",
-        icon: Banknote,
-      },
-      {
-        title: "Analytics",
-        url: "/dashboard/coming-soon",
-        icon: Gauge,
-        comingSoon: true,
+        title: "Bots",
+        url: "/dashboard/bots",
+        icon: BotIcon,
       },
     ],
   },

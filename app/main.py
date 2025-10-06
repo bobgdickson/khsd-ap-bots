@@ -5,9 +5,12 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from . import models, database
+from .routes import process_log
 from urllib.parse import unquote
 
 app = FastAPI(title="AP Bot Process Log API")
+app.include_router(process_log.router)
+
 
 class ExtractInvoiceIn(BaseModel):
     filename: str
