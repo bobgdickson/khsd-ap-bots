@@ -1,9 +1,9 @@
 import OpenAPIClientAxios from "openapi-client-axios";
 
 export const baseUrl =
-  process.env.SACS_API_BASE_URL ?? process.env.NEXT_PUBLIC_SACS_API_BASE_URL ?? "http://localhost:8000";
+  process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-const apiKey = process.env.SACS_API_KEY ?? process.env.NEXT_PUBLIC_SACS_API_KEY;
+const apiKey = process.env.API_KEY ?? process.env.NEXT_PUBLIC_API_KEY;
 
 const openapi = new OpenAPIClientAxios({
   definition: `${baseUrl}/openapi.json`,

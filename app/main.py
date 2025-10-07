@@ -7,12 +7,20 @@ from pydantic import BaseModel
 from . import models, database
 from .routes import process_log, bots_voucher_entry, bot_runs
 from urllib.parse import unquote
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="AP Bot Process Log API")
+app = FastAPI(title="AI Bot Process Log API")
 app.include_router(process_log.router)
 app.include_router(bots_voucher_entry.router)
 app.include_router(bot_runs.router)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class ExtractInvoiceIn(BaseModel):
     filename: str
