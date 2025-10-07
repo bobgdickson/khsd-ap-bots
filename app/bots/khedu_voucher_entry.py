@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import os, time, asyncio, shutil
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
@@ -257,13 +257,13 @@ def run_scholarship_entry(scholarship_key: str, test_mode: bool = True, addition
     t0 = time.time()
     if test_mode:
         base_dir = r"C:\Users\lovkarn_riar\OneDrive - Kern High School District\KHEDU 26\ED FOUNDATION\TEST"
-        # Directory mapping (folder names → scholarship_key)
+        # Directory mapping (folder names â†’ scholarship_key)
         VENDOR_DIRS = {
             "FIC": "FIC",
         }
     else:
         base_dir = r"C:\Users\lovkarn_riar\OneDrive - Kern High School District\KHEDU 26\ED FOUNDATION\PROCESSING"
-        # Directory mapping (folder names → scholarship_key)
+        # Directory mapping (folder names â†’ scholarship_key)
         VENDOR_DIRS = {
             "FIC": "FIC",
         }
@@ -278,7 +278,12 @@ def run_scholarship_entry(scholarship_key: str, test_mode: bool = True, addition
         print(f"No invoices found in {vendor_path}")
         return None, []
 
-    runid = generate_runid(scholarship_key, test_mode)
+    runid = generate_runid(
+        scholarship_key,
+        test_mode=test_mode,
+        bot_name="khedu_voucher_entry",
+        context={"scholarship_key": scholarship_key},
+    )
     runlog = VoucherRunLog(runid=runid, vendor=scholarship_key)
     process_logs: list[VoucherProcessLog] = []
 
@@ -287,14 +292,14 @@ def run_scholarship_entry(scholarship_key: str, test_mode: bool = True, addition
     processed_dir.mkdir(exist_ok=True)
     notprocessed_dir.mkdir(exist_ok=True)
 
-    print(f"\n🚀 Starting run {runid} with {len(invoices)} scholarships from {vendor_path}")
+    print(f"\nðŸš€ Starting run {runid} with {len(invoices)} scholarships from {vendor_path}")
 
     for invoice in invoices:
         try:
             # LLM Agent PDF Extraction
             scholarship_data = asyncio.run(run_scholarship_extraction(str(invoice), additional_instructions)).final_output
             if not scholarship_data:
-                print(f"❌ Failed extraction: {invoice.name}")
+                print(f"âŒ Failed extraction: {invoice.name}")
                 runlog.failures += 1
                 process_logs.append(
                     VoucherProcessLog(
@@ -347,7 +352,7 @@ def run_scholarship_entry(scholarship_key: str, test_mode: bool = True, addition
             )
             
         except Exception as e:
-            print(f"💥 Error processing {invoice.name}: {e}")
+            print(f"ðŸ’¥ Error processing {invoice.name}: {e}")
             runlog.failures += 1
             VoucherProcessLog(
                 runid=runid,
@@ -364,7 +369,7 @@ def run_scholarship_entry(scholarship_key: str, test_mode: bool = True, addition
         db = database.SessionLocal()
         try:
                 payload = process_log.model_dump()
-                orm_row = models.APBotProcessLog(**payload)
+                orm_row = models.BotProcessLog(**payload)
                 db.add(orm_row)
                 db.commit()
                 print("Logged to database.")
@@ -373,7 +378,7 @@ def run_scholarship_entry(scholarship_key: str, test_mode: bool = True, addition
 
     t1 = time.time()
     print(f"Average time per invoice: {(t1 - t0) / len(invoices):.2f} seconds.")
-    print(f"✅ Completed run {runid}: {runlog.successes} success, {runlog.duplicates} duplicates, {runlog.failures} failures")
+    print(f"âœ… Completed run {runid}: {runlog.successes} success, {runlog.duplicates} duplicates, {runlog.failures} failures")
     return runlog
 
 def test():

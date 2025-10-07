@@ -1,15 +1,17 @@
-from typing import List, Dict
+﻿from typing import List, Dict
 from anyio import from_thread
 from fastapi import FastAPI, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from . import models, database
-from .routes import process_log
+from .routes import process_log, bots_voucher_entry, bot_runs
 from urllib.parse import unquote
 
 app = FastAPI(title="AP Bot Process Log API")
 app.include_router(process_log.router)
+app.include_router(bots_voucher_entry.router)
+app.include_router(bot_runs.router)
 
 
 class ExtractInvoiceIn(BaseModel):
@@ -24,7 +26,7 @@ def on_startup():
 @app.get("/runids", response_model=List[str])
 def list_runids(db: Session = Depends(database.get_db)):
     """List all distinct run IDs in the process log."""
-    rows = db.query(models.APBotProcessLog.runid).distinct().all()
+    rows = db.query(models.BotProcessLog.runid).distinct().all()
     return [row[0] for row in rows]
 
 
@@ -33,11 +35,11 @@ def status_counts(runid: str = Query(...), db: Session = Depends(database.get_db
     """Get count of each status for run IDs starting with the given value."""
     rows = (
         db.query(
-            models.APBotProcessLog.status,
-            func.count(models.APBotProcessLog.id)
+            models.BotProcessLog.status,
+            func.count(models.BotProcessLog.id)
         )
-        .filter(models.APBotProcessLog.runid.like(f"{runid}%"))
-        .group_by(models.APBotProcessLog.status)
+        .filter(models.BotProcessLog.runid.like(f"{runid}%"))
+        .group_by(models.BotProcessLog.status)
         .all()
     )
     if not rows:
@@ -48,7 +50,7 @@ def status_counts(runid: str = Query(...), db: Session = Depends(database.get_db
 @app.delete("/runids/{runid}")
 def delete_runid(runid: str, db: Session = Depends(database.get_db)):
     """Delete all log entries for a given run ID."""
-    deleted = db.query(models.APBotProcessLog).filter(models.APBotProcessLog.runid == runid).delete()
+    deleted = db.query(models.BotProcessLog).filter(models.BotProcessLog.runid == runid).delete()
     if deleted == 0:
         raise HTTPException(status_code=404, detail=f"No entries found to delete for runid '{runid}'")
     db.commit()
@@ -62,9 +64,10 @@ def extract_invoice(payload: ExtractInvoiceIn):
     """
     filename = payload.filename
     from .bots.invoice_agent import run_invoice_extraction  # Adjust import as needed
-    print(f"🔍 Extracting invoice from: {filename}")
+    print(f"Extracting invoice from: {filename}")
     try:
         result = from_thread.run(run_invoice_extraction, filename)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     return result.final_output
+

@@ -1,4 +1,8 @@
+from datetime import datetime
+from typing import Any, Optional
+
 from pydantic import BaseModel
+
 
 class ExtractedInvoiceData(BaseModel):
     purchase_order: str
@@ -10,10 +14,12 @@ class ExtractedInvoiceData(BaseModel):
     miscellaneous_amount: float
     shipping_amount: float
 
+
 class VoucherEntryResult(BaseModel):
     voucher_id: str
     duplicate: bool
     out_of_balance: bool
+
 
 class VoucherRunLog(BaseModel):
     runid: str
@@ -23,6 +29,7 @@ class VoucherRunLog(BaseModel):
     duplicates: int = 0
     failures: int = 0
 
+
 class VoucherProcessLog(BaseModel):
     runid: str
     filename: str
@@ -31,16 +38,19 @@ class VoucherProcessLog(BaseModel):
     invoice: str
     status: str
 
+
 class PDFExtractionResult(BaseModel):
     extracted_text: str
     image_base64: str
     success: bool
     description: str
 
+
 class ScholarshipExtractedCheckAuthorization(BaseModel):
     name: str
     amount: float
     invoice_number: str
+
 
 class KheduJournalExtractedData(BaseModel):
     name: str
@@ -49,3 +59,22 @@ class KheduJournalExtractedData(BaseModel):
     description: str
     source_account: str
     destination_account: str
+
+
+class BotRunOut(BaseModel):
+    runid: str
+    bot_name: str
+    status: str
+    cancel_requested: bool
+    test_mode: bool
+    context: Optional[dict[str, Any]] = None
+    message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class BotRunCancelRequest(BaseModel):
+    reason: Optional[str] = None

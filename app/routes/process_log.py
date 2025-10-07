@@ -1,4 +1,4 @@
-from typing import List, Optional
+﻿from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -9,7 +9,7 @@ from .. import database, models
 router = APIRouter(prefix="/process-logs", tags=["process_logs"])
 
 
-class APBotProcessLogOut(BaseModel):
+class BotProcessLogOut(BaseModel):
     id: int
     runid: str
     filename: Optional[str]
@@ -22,12 +22,13 @@ class APBotProcessLogOut(BaseModel):
         orm_mode = True
 
 
-@router.get("", response_model=List[APBotProcessLogOut])
+@router.get("", response_model=List[BotProcessLogOut])
 def list_process_logs(
     runid: Optional[str] = Query(None, description="Filter logs by runid"),
     db: Session = Depends(database.get_db),
-) -> List[models.APBotProcessLog]:
-    query = db.query(models.APBotProcessLog)
+) -> List[models.BotProcessLog]:
+    query = db.query(models.BotProcessLog)
     if runid:
-        query = query.filter(models.APBotProcessLog.runid == runid)
-    return query.order_by(models.APBotProcessLog.id.desc()).all()
+        query = query.filter(models.BotProcessLog.runid == runid)
+    return query.order_by(models.BotProcessLog.id.desc()).all()
+

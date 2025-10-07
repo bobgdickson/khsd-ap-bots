@@ -62,10 +62,6 @@ export function AccountSwitcher({
             Account
           </DropdownMenuItem>
           <DropdownMenuItem>
-            <CreditCard />
-            Billing
-          </DropdownMenuItem>
-          <DropdownMenuItem>
             <Bell />
             Notifications
           </DropdownMenuItem>

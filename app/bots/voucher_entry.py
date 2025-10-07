@@ -1,5 +1,6 @@
-from pathlib import Path
-import os, time, asyncio, shutil
+﻿from pathlib import Path
+from typing import Optional
+import os, time, asyncio, shutil, sys
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -14,11 +15,46 @@ from app.bots.utils.ps import (
     get_voucher_id,
     handle_modal_sequence,
 )
-from app.bots.utils.misc import normalize_date, generate_runid, get_invoices_in_data
+from app.bots.utils.misc import (
+    generate_runid,
+    get_invoices_in_data,
+    is_run_cancel_requested,
+    normalize_date,
+    update_bot_run_status,
+)
 from app.bots.invoice_agent import run_invoice_extraction
 from app.bots.prompts import CDW_PROMPT, CLASS_PROMPT, MOBILE_PROMPT
 from app.schemas import ExtractedInvoiceData, VoucherEntryResult, VoucherRunLog, VoucherProcessLog
+if sys.platform.startswith("win"):
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except AttributeError:
+        pass
 from app import models, database
+
+def get_vendor_directory(vendor_key: str, test_mode: bool) -> Path:
+    if test_mode:
+        base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents\InvoiceProcessing"
+        vendor_dirs = {
+            "royal": "Royal Industrial",
+            "class": "Class Leasing",
+            "mobile": "Mobile Modular",
+            "floyds": "Floyds",
+            "seq": "Sequoia",
+            "cdw": "CDW",
+        }
+    else:
+        base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents - Fiscal\Accounts Payable"
+        vendor_dirs = {
+            "royal": "Royal Industrial",
+            "class": "Class Leasing Invoices",
+            "mobile": "Mobile Modular Invoices",
+            "floyds": "Floyd's (Standard Plumbing) invoices",
+            "seq": "Sequioa Paint",
+            "cdw": "CDW",
+        }
+    return Path(base_dir) / vendor_dirs[vendor_key]
+
 
 load_dotenv()
 
@@ -255,35 +291,21 @@ def voucher_playwright_bot(
                 browser.close()
 
 
-def run_vendor_entry(vendor_key: str, test_mode: bool = True, rent_line: str = "FY26", attach_only: bool = False, apo_override: str = None, additional_instructions: str = None):
+def run_vendor_entry(
+    vendor_key: str,
+    test_mode: bool = True,
+    rent_line: str = "FY26",
+    attach_only: bool = False,
+    apo_override: str = None,
+    additional_instructions: str = None,
+    runid: Optional[str] = None,
+):
     """
     Process all invoices for one vendor in a directory.
     Returns (VoucherRunLog, list[VoucherProcessLog]).
     """
     t0 = time.time()
-    if test_mode:
-        base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents\InvoiceProcessing"
-        # Directory mapping (folder names → vendor keys)
-        VENDOR_DIRS = {
-            "royal": "Royal Industrial",
-            "class": "Class Leasing",
-            "mobile": "Mobile Modular",
-            "floyds": "Floyds",
-            "seq": "Sequoia",
-            "cdw": "CDW",
-        }
-    else:
-        base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents - Fiscal\Accounts Payable"
-        # Directory mapping (folder names → vendor keys)
-        VENDOR_DIRS = {
-            "royal": "Royal Industrial",
-            "class": "Class Leasing Invoices",
-            "mobile": "Mobile Modular Invoices",
-            "floyds": "Floyd's (Standard Plumbing) invoices",
-            "seq": "Sequioa Paint",
-            "cdw": "CDW",
-        }
-    vendor_path = Path(base_dir) / VENDOR_DIRS[vendor_key]
+    vendor_path = get_vendor_directory(vendor_key, test_mode)
     if not vendor_path.exists():
         raise RuntimeError(f"Vendor directory {vendor_path} not found")
 
@@ -292,31 +314,52 @@ def run_vendor_entry(vendor_key: str, test_mode: bool = True, rent_line: str = "
         print(f"No invoices found in {vendor_path}")
         return None, []
 
-    runid = generate_runid(vendor_key, test_mode)
+    runid = runid or generate_runid(
+        vendor_key,
+        test_mode=test_mode,
+        bot_name="voucher_entry",
+        context={"vendor_key": vendor_key},
+    )
     runlog = VoucherRunLog(runid=runid, vendor=vendor_key)
     process_logs: list[VoucherProcessLog] = []
+
+    if is_run_cancel_requested(runid):
+        update_bot_run_status(runid, "cancelled", message="Cancelled before start")
+        print(f"Run {runid} was cancelled before it started.")
+        return runlog
 
     processed_dir = vendor_path / "Processed"
     notprocessed_dir = vendor_path / "NotProcessed"
     processed_dir.mkdir(exist_ok=True)
     notprocessed_dir.mkdir(exist_ok=True)
 
-    print(f"\n🚀 Starting run {runid} with {len(invoices)} invoices from {vendor_path}")
+    update_bot_run_status(
+        runid,
+        "running",
+        context_updates={"total_invoices": len(invoices)},
+    )
 
-    for invoice in invoices:
-        try:
-            # LLM Agent PDF Extraction
-            invoice_data = asyncio.run(run_invoice_extraction(str(invoice), additional_instructions)).final_output
-            # Strip white space from PO
-            invoice_data.purchase_order = invoice_data.purchase_order.strip()
-            invoice_data.invoice_date = normalize_date(invoice_data.invoice_date)
-            if apo_override:
-                invoice_data.purchase_order = apo_override
-            if not invoice_data:
-                print(f"❌ Failed extraction: {invoice.name}")
-                runlog.failures += 1
-                process_logs.append(
-                    VoucherProcessLog(
+    print(f"\nðŸš€ Starting run {runid} with {len(invoices)} invoices from {vendor_path}")
+
+    cancelled = False
+    try:
+        for invoice in invoices:
+            if is_run_cancel_requested(runid):
+                print(f"Cancellation requested for run {runid}. Stopping further processing.")
+                cancelled = True
+                break
+
+            process_log: Optional[VoucherProcessLog] = None
+
+            try:
+                extraction_result = asyncio.run(
+                    run_invoice_extraction(str(invoice), additional_instructions)
+                )
+
+                if not extraction_result:
+                    print(f"âŒ Failed extraction: {invoice.name}")
+                    runlog.failures += 1
+                    process_log = VoucherProcessLog(
                         runid=runid,
                         filename=invoice.name,
                         voucher_id="Extraction Failed",
@@ -324,79 +367,121 @@ def run_vendor_entry(vendor_key: str, test_mode: bool = True, rent_line: str = "
                         invoice="",
                         status="failure",
                     )
+                else:
+                    invoice_data = extraction_result.final_output
+                    invoice_data.purchase_order = invoice_data.purchase_order.strip()
+                    invoice_data.invoice_date = normalize_date(invoice_data.invoice_date)
+                    if apo_override:
+                        invoice_data.purchase_order = apo_override
+
+                    royal_style = vendor_key in ROYAL_STYLE_VENDORS
+                    result = voucher_playwright_bot(
+                        invoice_data,
+                        filepath=str(invoice),
+                        rent_line=rent_line,
+                        attach_only=attach_only,
+                        test_mode=test_mode,
+                        royal_style_entry=royal_style,
+                    )
+
+                    runlog.processed += 1
+
+                    # Move files
+                    if result.duplicate:
+                        runlog.duplicates += 1
+                        status = "duplicate"
+                        voucher_id = "Duplicate"
+                        print(f"Moving duplicate invoice {invoice.name} to NotProcessed.")
+                        shutil.move(str(invoice), notprocessed_dir / invoice.name)
+                    elif result.voucher_id.isdigit():
+                        runlog.successes += 1
+                        status = "success"
+                        voucher_id = result.voucher_id
+                        print(f"Moving entered invoice {invoice.name} to Processed.")
+                        shutil.move(str(invoice), processed_dir / invoice.name)
+                    else:
+                        runlog.failures += 1
+                        status = "failure"
+                        voucher_id = result.voucher_id
+                        print(f"Not moving failed invoice {invoice.name}.")
+                        # leave file in place
+
+                    process_log = VoucherProcessLog(
+                        runid=runid,
+                        filename=invoice.name,
+                        voucher_id=voucher_id,
+                        amount=invoice_data.total_amount,
+                        invoice=invoice_data.invoice_number,
+                        status=status,
+                    )
+
+            except Exception as e:
+                print(f"Error processing {invoice.name}: {e}")
+                runlog.failures += 1
+                error_message = str(e).strip() or "Unknown error"
+                truncated_error = (
+                    error_message if len(error_message) <= 240 else f"{error_message[:237]}..."
                 )
+                process_log = VoucherProcessLog(
+                    runid=runid,
+                    filename=invoice.name,
+                    voucher_id=f"Error: {truncated_error}",
+                    amount=0.0,
+                    invoice="",
+                    status="failure",
+                )
+
+            if process_log is None:
                 continue
 
-            royal_style = vendor_key in ROYAL_STYLE_VENDORS
-            result = voucher_playwright_bot(
-                invoice_data,
-                filepath=str(invoice),
-                rent_line=rent_line,
-                attach_only=attach_only,
-                test_mode=test_mode,
-                royal_style_entry=royal_style,
-            )
+            process_logs.append(process_log)
 
-            runlog.processed += 1
-            
-            # Move files
-            if result.duplicate:
-                runlog.duplicates += 1
-                status = "duplicate"
-                voucher_id = "Duplicate"
-                print(f"Moving duplicate invoice {invoice.name} to NotProcessed.")
-                shutil.move(str(invoice), notprocessed_dir / invoice.name)
-            elif result.voucher_id.isdigit():
-                runlog.successes += 1
-                status = "success"
-                voucher_id = result.voucher_id
-                print(f"Moving entered invoice {invoice.name} to Processed.")
-                shutil.move(str(invoice), processed_dir / invoice.name)
-            else:
-                runlog.failures += 1
-                status = "failure"
-                voucher_id = result.voucher_id
-                print(f"Not moving failed invoice {invoice.name}.")
-                # leave file in place
-            
-            process_log = VoucherProcessLog(
-                runid=runid,
-                filename=invoice.name,
-                voucher_id=voucher_id,
-                amount=invoice_data.total_amount,
-                invoice=invoice_data.invoice_number,
-                status=status,
-            )
-            
-        except Exception as e:
-            print(f"💥 Error processing {invoice.name}: {e}")
-            runlog.failures += 1
-            VoucherProcessLog(
-                runid=runid,
-                filename=invoice.name,
-                voucher_id="Error",
-                amount=0.0,
-                invoice="",
-                status="failure",
-            )
-
-
-        # Write to DB
-        print(process_log)
-        db = database.SessionLocal()
-        try:
+            # Write to DB
+            print(process_log)
+            db = database.SessionLocal()
+            try:
                 payload = process_log.model_dump()
-                orm_row = models.APBotProcessLog(**payload)
+                orm_row = models.BotProcessLog(**payload)
                 db.add(orm_row)
                 db.commit()
                 print("Logged to database.")
-        finally:
-            db.close()
+            finally:
+                db.close()
+    except Exception as exc:
+        update_bot_run_status(runid, "failed", message=str(exc))
+        raise
 
     t1 = time.time()
     print(f"Average time per invoice: {(t1 - t0) / len(invoices):.2f} seconds.")
-    print(f"✅ Completed run {runid}: {runlog.successes} success, {runlog.duplicates} duplicates, {runlog.failures} failures")
+
+    if cancelled:
+        update_bot_run_status(
+            runid,
+            "cancelled",
+            message="Cancelled by request",
+            context_updates={
+                "processed": runlog.processed,
+                "successes": runlog.successes,
+                "duplicates": runlog.duplicates,
+                "failures": runlog.failures,
+            },
+        )
+        print(f"Run {runid} cancelled after processing {runlog.processed} invoices.")
+    else:
+        update_bot_run_status(
+            runid,
+            "completed",
+            context_updates={
+                "processed": runlog.processed,
+                "successes": runlog.successes,
+                "duplicates": runlog.duplicates,
+                "failures": runlog.failures,
+            },
+        )
+        print(f"Completed run {runid}: {runlog.successes} success, {runlog.duplicates} duplicates, {runlog.failures} failures")
+
     return runlog
+
 
 
 if __name__ == "__main__":
@@ -406,3 +491,4 @@ if __name__ == "__main__":
     #runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
     runlog = run_vendor_entry("cdw", test_mode=False, attach_only=True, additional_instructions=CDW_PROMPT)
     #runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26", additional_instructions=CLASS_PROMPT)
+
