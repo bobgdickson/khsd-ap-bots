@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from "react";
@@ -23,18 +22,58 @@ export function RunLauncher() {
   const router = useRouter();
   const launcher = runLaunchers[0];
 
-  const vendorDefault = launcher.vendorOptions[0]?.value ?? "";
   const instructionOptions = launcher.instructionOptions ?? [];
+  const defaultVendor = launcher.vendorOptions[0]?.value ?? "";
 
-  const [vendorKey, setVendorKey] = React.useState(vendorDefault);
-  const [testMode, setTestMode] = React.useState(launcher.defaults.test_mode ?? true);
-  const [attachOnly, setAttachOnly] = React.useState(launcher.defaults.attach_only ?? false);
-  const [rentLineEnabled, setRentLineEnabled] = React.useState(Boolean(launcher.defaults.rent_line));
-  const [rentLine, setRentLine] = React.useState(launcher.defaults.rent_line ?? "");
-  const [selectedInstructionId, setSelectedInstructionId] = React.useState(
-    instructionOptions[0]?.id ?? CUSTOM_PROMPT_ID,
+  const [vendorKey, setVendorKey] = React.useState(defaultVendor);
+
+  const getVendorDefaults = React.useCallback(
+    (key: string) => {
+      const vendor = launcher.vendorOptions.find((option) => option.value === key);
+      const fallbackInstructionId = instructionOptions[0]?.id ?? "none";
+
+      if (!vendor) {
+        return {
+          attachOnly: launcher.defaults.attach_only ?? false,
+          rentLineEnabled: Boolean(launcher.defaults.rent_line),
+          instructionId: fallbackInstructionId,
+          apoOverride: "",
+          apoEnabled: false,
+        };
+      }
+
+      return {
+        attachOnly: vendor.defaultAttachOnly ?? launcher.defaults.attach_only ?? false,
+        rentLineEnabled: vendor.defaultRentLineEnabled ?? Boolean(launcher.defaults.rent_line),
+        instructionId: vendor.defaultInstructionId ?? fallbackInstructionId,
+        apoOverride: vendor.defaultApoOverride ?? "",
+        apoEnabled: Boolean(vendor.defaultApoOverride),
+      };
+    },
+    [instructionOptions, launcher],
   );
-  const [instructions, setInstructions] = React.useState(() => instructionOptions[0]?.prompt ?? "");
+
+  const initialDefaults = React.useMemo(() => getVendorDefaults(defaultVendor), [defaultVendor, getVendorDefaults]);
+
+  const [testMode, setTestMode] = React.useState(launcher.defaults.test_mode ?? true);
+  const [attachOnly, setAttachOnly] = React.useState(initialDefaults.attachOnly ?? false);
+  const [rentLineEnabled, setRentLineEnabled] = React.useState(initialDefaults.rentLineEnabled ?? false);
+  const [rentLine, setRentLine] = React.useState(
+    initialDefaults.rentLineEnabled ? launcher.defaults.rent_line ?? "" : "",
+  );
+  const [apoEnabled, setApoEnabled] = React.useState(initialDefaults.apoEnabled ?? false);
+  const [apoOverride, setApoOverride] = React.useState(initialDefaults.apoOverride ?? "");
+
+  const initialInstructionId = instructionOptions.some((option) => option.id === initialDefaults.instructionId)
+    ? initialDefaults.instructionId
+    : instructionOptions[0]?.id ?? CUSTOM_PROMPT_ID;
+
+  const [selectedInstructionId, setSelectedInstructionId] = React.useState(initialInstructionId);
+  const [instructions, setInstructions] = React.useState(() => {
+    const match = instructionOptions.find((option) => option.id === initialInstructionId);
+    return match?.prompt ?? "";
+  });
+
   const [isSubmitting, setIsSubmitting] = React.useState(false);
 
   React.useEffect(() => {
@@ -53,6 +92,38 @@ export function RunLauncher() {
     }
   }, [selectedInstructionId, instructionOptions]);
 
+  React.useEffect(() => {
+    const defaults = getVendorDefaults(vendorKey);
+    setAttachOnly(defaults.attachOnly ?? false);
+    setRentLineEnabled(defaults.rentLineEnabled ?? false);
+    setApoEnabled(defaults.apoEnabled ?? false);
+
+    const fallbackId = instructionOptions[0]?.id ?? CUSTOM_PROMPT_ID;
+    const nextInstructionId = defaults.instructionId ?? fallbackId;
+    setSelectedInstructionId(
+      instructionOptions.some((option) => option.id === nextInstructionId) ? nextInstructionId : CUSTOM_PROMPT_ID,
+    );
+
+    const selection = instructionOptions.find((option) => option.id === defaults.instructionId);
+    setInstructions(selection?.prompt ?? "");
+    setApoOverride(defaults.apoOverride ?? "");
+  }, [vendorKey, getVendorDefaults, instructionOptions]);
+
+  const handleApoToggle = React.useCallback(
+    (value: boolean) => {
+      setApoEnabled(value);
+      if (!value) {
+        setApoOverride("");
+      } else {
+        const defaults = getVendorDefaults(vendorKey);
+        if (defaults.apoOverride) {
+          setApoOverride(defaults.apoOverride);
+        }
+      }
+    },
+    [getVendorDefaults, vendorKey],
+  );
+
   const handleSubmit = async () => {
     if (!vendorKey) {
       toast.error("Select a vendor to start a run");
@@ -67,7 +138,9 @@ export function RunLauncher() {
         rent_line: rentLineEnabled && rentLine ? rentLine : undefined,
         attach_only: attachOnly,
         additional_instructions: instructions.trim() ? instructions : undefined,
+        apo_override: apoEnabled && apoOverride.trim() ? apoOverride.trim() : undefined,
       });
+
       const runid = payload?.runid ?? "";
       toast.success("Run scheduled", {
         description: runid ? `Run ${runid} queued successfully.` : "The run was queued successfully.",
@@ -168,6 +241,21 @@ export function RunLauncher() {
             placeholder="Optional guidance for the extraction agent"
             rows={3}
           />
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Switch id="apo-override-toggle" checked={apoEnabled} onCheckedChange={handleApoToggle} />
+            <Label htmlFor="apo-override-toggle">Specify APO override</Label>
+          </div>
+          {apoEnabled && (
+            <Input
+              id="apo-override"
+              value={apoOverride}
+              onChange={(event) => setApoOverride(event.target.value)}
+              placeholder="Optional APO override"
+            />
+          )}
         </div>
 
         <div className="flex justify-end">

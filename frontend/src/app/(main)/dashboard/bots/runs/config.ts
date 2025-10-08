@@ -1,4 +1,4 @@
-﻿export const dashboardConfig = {
+export const dashboardConfig = {
   title: "Bot Runs",
   apiBase: "/bot-runs",
   sections: {
@@ -38,11 +38,43 @@ export const runLaunchers = [
     endpoint: "/bots/voucher-entry",
     allowRentLine: true,
     vendorOptions: [
-      { value: "cdw", label: "CDW" },
-      { value: "royal", label: "Royal Industrial" },
-      { value: "class", label: "Class Leasing" },
-      { value: "mobile", label: "Mobile Modular" },
-      { value: "floyds", label: "Floyd's" },
+      {
+        value: "cdw",
+        label: "CDW",
+        defaultAttachOnly: true,
+        defaultRentLineEnabled: false,
+        defaultInstructionId: "cdw",
+      },
+      {
+        value: "royal",
+        label: "Royal Industrial",
+        defaultAttachOnly: false,
+        defaultRentLineEnabled: false,
+        defaultInstructionId: "none",
+        defaultApoOverride: "KERNH-APO950043J",
+      },
+      {
+        value: "class",
+        label: "Class Leasing",
+        defaultAttachOnly: false,
+        defaultRentLineEnabled: true,
+        defaultInstructionId: "class",
+      },
+      {
+        value: "mobile",
+        label: "Mobile Modular",
+        defaultAttachOnly: false,
+        defaultRentLineEnabled: true,
+        defaultInstructionId: "mobile",
+      },
+      {
+        value: "floyds",
+        label: "Floyd's",
+        defaultAttachOnly: false,
+        defaultRentLineEnabled: false,
+        defaultInstructionId: "none",
+        defaultApoOverride: "KERNH-APO962523J",
+      },
     ],
     instructionOptions: [
       { id: "none", label: "None", prompt: "" },
