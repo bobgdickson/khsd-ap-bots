@@ -35,3 +35,28 @@ class BotRun(Base):
     def __repr__(self) -> str:
         return f"<BotRun(runid={self.runid}, bot_name={self.bot_name}, status={self.status})>"
 
+
+class PaylineExcelItemModel(Base):
+    __tablename__ = "ai_bot_payline_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tab_name = Column(String(100), nullable=False, index=True)
+    hr_requestor = Column(String(100), nullable=True, index=True)
+    month_requested = Column(String(100), nullable=True, index=True)
+    site = Column(String(150), nullable=True, index=True)
+    emplid = Column(String(50), nullable=False, index=True)
+    empl_rcd = Column(Integer, nullable=False)
+    ern_ded_code = Column(String(50), nullable=False, index=True)
+    amount = Column(Float, nullable=False)
+    earnings_begin_dt = Column(String(20), nullable=True)
+    earnings_end_dt = Column(String(20), nullable=True)
+    notes = Column(String(500), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    status = Column(String(50), nullable=False, default="new", index=True)  # e.g., 'new', 'processed', 'error'
+
+    def __repr__(self) -> str:
+        return (
+            f"<PaylineExcelItemModel(id={self.id}, tab_name={self.tab_name}, "
+            f"emplid={self.emplid})>"
+        )

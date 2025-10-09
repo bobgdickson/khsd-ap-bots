@@ -22,7 +22,7 @@ from app.bots.utils.misc import (
     normalize_date,
     update_bot_run_status,
 )
-from app.bots.invoice_agent import run_invoice_extraction
+from app.bots.agents.invoice_extract import run_invoice_extraction
 from app.bots.prompts import CDW_PROMPT, CLASS_PROMPT, MOBILE_PROMPT
 from app.schemas import ExtractedInvoiceData, VoucherEntryResult, VoucherRunLog, VoucherProcessLog
 if sys.platform.startswith("win"):
@@ -239,9 +239,11 @@ def voucher_playwright_bot(
             # Attach Only Flow
             else:
                 print("Attach-only mode")
+                #TODO handle multiple pop ups for generic voucher bot entry per aiko lots of popups on some
                 ps_find_button(page, "Find an Existing Value Find").click()
                 ps_wait(page, 1)
                 ps_find_retry(page, "User ID").focus()
+                #TODO change to khedu style drop down box handling
                 for key in ["Tab", "c", "Tab"]:
                     page.keyboard.press(key)
                     ps_wait(page, 1)
@@ -339,7 +341,7 @@ def run_vendor_entry(
         context_updates={"total_invoices": len(invoices)},
     )
 
-    print(f"\nðŸš€ Starting run {runid} with {len(invoices)} invoices from {vendor_path}")
+    print(f"\n🚀 Starting run {runid} with {len(invoices)} invoices from {vendor_path}")
 
     cancelled = False
     try:

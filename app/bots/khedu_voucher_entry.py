@@ -14,7 +14,7 @@ from app.bots.utils.ps import (
     handle_modal_sequence,
 )
 from app.bots.utils.misc import normalize_date, generate_runid, get_invoices_in_data
-from app.bots.khedu_scholarship_agent import run_scholarship_extraction
+from app.bots.agents.khedu_scholarship_extract import run_scholarship_extraction
 from app.bots.prompts import FIC_PROMPT
 from app.schemas import ScholarshipExtractedCheckAuthorization, VoucherEntryResult, VoucherRunLog, VoucherProcessLog
 from app import models, database

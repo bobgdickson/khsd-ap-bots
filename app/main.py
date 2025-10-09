@@ -71,7 +71,7 @@ def extract_invoice(payload: ExtractInvoiceIn):
     Run the invoice_agent extraction process for the given filename and return the result.
     """
     filename = payload.filename
-    from .bots.invoice_agent import run_invoice_extraction  # Adjust import as needed
+    from .bots.agents.invoice_extract import run_invoice_extraction  # Adjust import as needed
     print(f"Extracting invoice from: {filename}")
     try:
         result = from_thread.run(run_invoice_extraction, filename)

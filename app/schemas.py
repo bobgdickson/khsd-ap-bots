@@ -78,3 +78,26 @@ class BotRunOut(BaseModel):
 
 class BotRunCancelRequest(BaseModel):
     reason: Optional[str] = None
+
+
+class PaylineExcelItem(BaseModel):
+    tab_name: str
+    hr_requestor: str
+    month_requested: str
+    site: str
+    emplid: str
+    empl_rcd: int
+    ern_ded_code: str
+    amount: float
+    earnings_begin_dt: str
+    earnings_end_dt: str
+    notes: Optional[str] = None
+
+class PaylineExcelError(BaseModel):
+    row_number: int
+    tab_name: str
+    error: str
+
+class PaylineExcelExtractedData(BaseModel):
+    items: list[PaylineExcelItem]
+    errors: Optional[list[PaylineExcelError]] = None
