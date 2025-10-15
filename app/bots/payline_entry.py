@@ -27,7 +27,7 @@ def run_raw_sql(emplid, empl_rcd, begin_dt, end_dt, erncd, amt) -> str:
     db_url = os.getenv("PS_DB_URL_HCM")
     # TODO: Stephen SQL for checking status of payline
     query = """
-    SELECT *
+    SELECT COUNT(*)
     FROM PS_PAY_EARNINGS E
     JOIN PS_PAY_OTH_EARNS O
         ON O.PAYGROUP = E.PAYGROUP
@@ -38,7 +38,7 @@ def run_raw_sql(emplid, empl_rcd, begin_dt, end_dt, erncd, amt) -> str:
         AND O.PAY_END_DT = E.PAY_END_DT
         AND O.ADDL_NBR = E.ADDL_NBR
     WHERE
-        AND E.EMPLID = :emplid
+        E.EMPLID = :emplid
         AND E.EMPL_RCD = :empl_rcd
         AND E.EARNS_BEGIN_DT = :begin_dt
         AND E.EARNS_END_DT = :end_dt
@@ -275,6 +275,7 @@ def run_payline_entry(test_mode: bool = True, additional_instructions: str = Non
         raise RuntimeError(f"Adjustment file {excel_path} not found")
 
     runid = generate_runid(
+        identifier="payline",
         test_mode=test_mode,
         bot_name="payline_entry",
     )
@@ -283,14 +284,18 @@ def run_payline_entry(test_mode: bool = True, additional_instructions: str = Non
     print(f"\n🚀 Starting run {runid} for payline adjustments")
 
     # Extract payline worklist from excel file
+    paylines: list[PaylineExcelItem] = []
+    errors: list[PaylineExcelError] = []
     try:
-        payline_data = asyncio.run(run_payline_extraction(excel_path, additional_instructions)).final_output
-        if not payline_data:
+        extraction_result = asyncio.run(
+            run_payline_extraction(excel_path, additional_instructions)
+        )
+        if not extraction_result or not extraction_result.final_output:
             print(f"Failed extraction: {excel_path}")
-        
-        paylines = [item for item in payline_data if isinstance(item, PaylineExcelItem)]
-        errors = [item for item in payline_data if isinstance(item, PaylineExcelError)]
-            
+        else:
+            payline_output = extraction_result.final_output
+            paylines = list(payline_output.items or [])
+            errors = list(payline_output.errors or [])
     except Exception as e:
         print(f"Extraction error: {e}")
 
@@ -316,10 +321,28 @@ def run_payline_entry(test_mode: bool = True, additional_instructions: str = Non
         except Exception as e:
             print(f"DB error for {payline}: {e}")
 
-    #TODO: Run SQL to check if they have been entered in PS already and update status to processed if so
-
     # Get all paylines with status of new
     paylines_to_process = db.query(models.PaylineExcelItem).filter_by(status="new").all()
+
+    # Run SQL to check if they have been entered in PS already and update status to processed if so
+    for payline in paylines_to_process:
+        try:
+            count = int(run_raw_sql(
+                payline.emplid,
+                payline.empl_rcd,
+                payline.earnings_begin_dt,
+                payline.earnings_end_dt,
+                payline.ern_ded_code,
+                payline.amount
+            ))
+            if count > 0:
+                payline.status = "processed"
+                db.commit()
+        except Exception as e:
+            print(f"SQL check error for {payline}: {e}")
+
+    paylines_to_process = db.query(models.PaylineExcelItem).filter_by(status="new").all()
+    print(f"Found {len(paylines_to_process)} paylines to process.")
 
     for payline in paylines_to_process:
         try:
@@ -333,7 +356,7 @@ def run_payline_entry(test_mode: bool = True, additional_instructions: str = Non
 
             if result.success:
                 runlog.processed += 1
-                payline.status = "processed"
+                payline.status = "tested" if test_mode else "processed"
             else:
                 payline.status = "error"    
             
@@ -366,16 +389,9 @@ def test():
         earnings_end_dt="2025-08-31",
         notes="Test entry"
     )
-    payline_result = payline_playwright_bot(payline_data=payline_data,
-                                            test_mode=True)
+    payline_result = payline_playwright_bot(payline_data=payline_data, test_mode=True)
     return payline_result
 
 if __name__ == "__main__":
-    # PRD runs
-    #runlog = run_vendor_entry("royal", test_mode=False, rent_line="FY26", apo_override="KERNH-APO950043J")
-    #runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26", additional_instructions=MOBILE_PROMPT)
-    #runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
-    #runlog = run_vendor_entry("cdw", test_mode=False, attach_only=True, additional_instructions=CDW_PROMPT)
-    #runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26", additional_instructions=CLASS_PROMPT)
-    #print(test())
-    run_raw_sql('127518', 0, '2025-08-01', '2025-08-31', 'RSA', 813.18)
+    #run_raw_sql('127518', 0, '2025-08-01', '2025-08-31', 'RSA', 813.18)
+    run_payline_entry(test_mode=True)
