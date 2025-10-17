@@ -36,7 +36,7 @@ class BotRun(Base):
         return f"<BotRun(runid={self.runid}, bot_name={self.bot_name}, status={self.status})>"
 
 
-class PaylineExcelItemModel(Base):
+class PaylineExcelItem(Base):
     __tablename__ = "ai_bot_payline_items"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -57,6 +57,6 @@ class PaylineExcelItemModel(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<PaylineExcelItemModel(id={self.id}, tab_name={self.tab_name}, "
+            f"<PaylineExcelItem(id={self.id}, tab_name={self.tab_name}, "
             f"emplid={self.emplid})>"
         )

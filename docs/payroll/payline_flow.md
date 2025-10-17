@@ -5,9 +5,12 @@ Emplid,
 Amount, 
 Etc"))
 B-->F[Agent Check]
-F-->C[PeopleSoft Entry]
-C-->D[Workflow Submit for HITL?]
-D-->E[(Bot Process Log)]
+F-->G[(Payline Worklist)]
+D-->C[PeopleSoft Entry]
+G-->D[Workflow Submit for HITL?]
+C-->E[(Bot Process Log)]
+D-->H[[HR Fix]]
+H-->A
 ```
 
 ## Payroll Payline Processing Bot
@@ -22,7 +25,7 @@ High level plan is to:
     - Codes, dates, etc
     - [X] Agentic Identification of tabs of interest (multiple in HR files)
     - [X] Build a log of what is done/potentially done, tools to check status updated db
-    - [ ] Load rows from agent into db (upsert safe dont overwrite existing)
+    - [X] Load rows from agent into db (upsert safe dont overwrite existing)
     - [ ] SQL from stephen to check emplid/amount is loaded/not loaded (update db status)
     - [ ] Update excel with 'entered' or some checkmark to indicate processing status?
 - [ ] Agentic calc/sanity check
