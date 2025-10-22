@@ -101,3 +101,20 @@ class PaylineExcelError(BaseModel):
 class PaylineExcelExtractedData(BaseModel):
     items: list[PaylineExcelItem]
     errors: Optional[list[PaylineExcelError]] = None
+
+class PaylineEntryResult(BaseModel):
+    success: bool
+    pay_group: str
+    pay_end_dt: str
+    off_cycle: str
+    page_num: int
+    line_num: int
+    addl_nbr: int
+    emplid: str
+    amount: float
+
+class PaylineRunLog(BaseModel):
+    runid: str
+    processed: int = 0
+    successes: int = 0
+    failures: int = 0
