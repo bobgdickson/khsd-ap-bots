@@ -77,12 +77,14 @@ def voucher_playwright_bot(
     apo_flag = False
 
     if test_mode:
+        PS_BASE = os.getenv("PEOPLESOFT_TEST_ENV")
         PS_BASE_URL = (
             os.getenv("PEOPLESOFT_TEST_ENV", "https://kdfq92.hosted.cherryroad.com/")
             + "psp/KDFQ92"
         )
         print(f"Running in TEST mode against {PS_BASE_URL}")
     else:
+        PS_BASE = os.getenv("PEOPLESOFT_ENV")
         PS_BASE_URL = os.getenv("PEOPLESOFT_ENV") + "psp/KDFP92"
         print(f"Running in PRODUCTION mode against {PS_BASE_URL}")
 
@@ -99,7 +101,7 @@ def voucher_playwright_bot(
             browser = p.chromium.launch(headless=False)
             page = browser.new_page()
             page.set_viewport_size({"width": 1920, "height": 1080})
-            page.goto(PS_BASE_URL)
+            page.goto(PS_BASE, timeout=60000)
 
             page.wait_for_selector("input#i0116")
             page.fill("input#i0116", USERNAME)
