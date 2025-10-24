@@ -60,3 +60,22 @@ class PaylineExcelItem(Base):
             f"<PaylineExcelItem(id={self.id}, tab_name={self.tab_name}, "
             f"emplid={self.emplid})>"
         )
+
+
+class AgentRegistry(Base):
+    __tablename__ = "ai_agents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False, unique=True, index=True)
+    description = Column(String(255), nullable=True)
+    instructions = Column(String, nullable=False)
+    model = Column(String(100), nullable=False)
+    output_type = Column(String(100), nullable=False)
+    tools = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    active = Column(Boolean, nullable=False, default=True)
+
+    def __repr__(self) -> str:
+        return f"<Agent(id={self.id}, name={self.name})>"
