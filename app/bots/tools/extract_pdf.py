@@ -1,7 +1,7 @@
 import base64
 import io
 
-from agents import function_tool
+from langchain.tools import tool
 import fitz
 from pathlib import Path
 from app.schemas import PDFExtractionResult
@@ -112,7 +112,7 @@ def _extract_image_file(
             )
 
 
-@function_tool
+@tool
 def extract_pdf_contents(
     input: str,
     *,

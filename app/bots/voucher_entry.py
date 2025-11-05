@@ -361,7 +361,7 @@ def run_vendor_entry(
                 )
 
                 if not extraction_result:
-                    print(f"âŒ Failed extraction: {invoice.name}")
+                    print(f"Failed extraction: {invoice.name}")
                     runlog.failures += 1
                     process_log = VoucherProcessLog(
                         runid=runid,
@@ -372,7 +372,7 @@ def run_vendor_entry(
                         status="failure",
                     )
                 else:
-                    invoice_data = extraction_result.final_output
+                    invoice_data = extraction_result['structured_response']
                     invoice_data.purchase_order = invoice_data.purchase_order.strip()
                     invoice_data.invoice_date = normalize_date(invoice_data.invoice_date)
                     if apo_override:
@@ -493,6 +493,6 @@ if __name__ == "__main__":
     #runlog = run_vendor_entry("royal", test_mode=False, rent_line="FY26", apo_override="KERNH-APO950043J")
     #runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26", additional_instructions=MOBILE_PROMPT)
     #runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
-    runlog = run_vendor_entry("cdw", test_mode=False, attach_only=True, additional_instructions=CDW_PROMPT)
+    runlog = run_vendor_entry("cdw", test_mode=True, attach_only=True, additional_instructions=CDW_PROMPT)
     #runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26", additional_instructions=CLASS_PROMPT)
 
