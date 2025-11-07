@@ -9,6 +9,7 @@ uvicorn
 playwright
 langchain
 langchain-openai
+langfuse
 pymupdf
 python-dateutil
 pytesseract

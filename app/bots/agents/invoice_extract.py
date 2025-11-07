@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from app.schemas import ExtractedInvoiceData
 from app.bots.tools.extract_pdf import extract_pdf_contents
+from app.services.langfuse import langfuse_handler
 
 load_dotenv()
 
@@ -69,8 +70,7 @@ async def run_invoice_extraction(invoice_path: str | Path, extra_instructions: s
                 response_format=response_format,
             )
 
-        #with trace("Extracting invoice fields"):
-        result = agent.invoke(input)
+        result = agent.invoke(input, config={"callbacks": [langfuse_handler]})
         print("✅ Extraction result:")
         print(result['structured_response'])
         return result
