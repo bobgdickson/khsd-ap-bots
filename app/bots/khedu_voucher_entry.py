@@ -297,7 +297,8 @@ def run_scholarship_entry(scholarship_key: str, test_mode: bool = True, addition
     for invoice in invoices:
         try:
             # LLM Agent PDF Extraction
-            scholarship_data = asyncio.run(run_scholarship_extraction(str(invoice), additional_instructions)['structured_response'])
+            scholarship_data = asyncio.run(run_scholarship_extraction(str(invoice), additional_instructions))
+            scholarship_data = scholarship_data['structured_response']
             if not scholarship_data:
                 print(f"Failed extraction: {invoice.name}")
                 runlog.failures += 1
