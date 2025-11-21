@@ -88,5 +88,5 @@ async def run_journal_extraction(invoice_path: str | Path, extra_instructions: s
 # ---------- MAIN ----------
 
 if __name__ == "__main__":
-    sample_invoice = "./data/edu_je.pdf"
+    sample_invoice = "./edu_je.pdf"
     asyncio.run(run_journal_extraction(sample_invoice))
