@@ -52,6 +52,7 @@ def get_vendor_directory(vendor_key: str, test_mode: bool) -> Path:
             "floyds": "Floyd's (Standard Plumbing) invoices",
             "seq": "Sequioa Paint",
             "cdw": "CDW",
+            "attach": "Invoices scanned, need to be attached",
         }
     return Path(base_dir) / vendor_dirs[vendor_key]
 
@@ -72,6 +73,7 @@ def voucher_playwright_bot(
     attach_only: bool = False,
     rent_line: str = "FY26",
     test_mode: bool = False,
+    generic_attach: bool = False,
 ) -> VoucherEntryResult:
 
     apo_flag = False
@@ -244,12 +246,19 @@ def voucher_playwright_bot(
                 #TODO handle multiple pop ups for generic voucher bot entry per aiko lots of popups on some
                 ps_find_button(page, "Find an Existing Value Find").click()
                 ps_wait(page, 1)
-                ps_find_retry(page, "User ID").focus()
-                #TODO change to khedu style drop down box handling
-                for key in ["Tab", "c", "Tab"]:
-                    page.keyboard.press(key)
-                    ps_wait(page, 1)
-                ps_find_retry(page, "Invoice Number").fill(invoice_data.invoice_number)
+                if generic_attach:
+                    print("Generic attach mode - looking up voucher")
+                    # Prefix voucher ID with zeroes to match format
+                    while len(invoice_data.invoice_number) < 8:
+                        invoice_data.invoice_number = "0" + invoice_data.invoice_number
+                    ps_find_retry(page, "Voucher ID").fill(invoice_data.invoice_number)
+                else:
+                    ps_find_retry(page, "User ID").focus()
+                    #TODO change to khedu style drop down box handling
+                    for key in ["Tab", "c", "Tab"]:
+                        page.keyboard.press(key)
+                        ps_wait(page, 1)
+                    ps_find_retry(page, "Invoice Number").fill(invoice_data.invoice_number)
                 ps_target_frame(page).get_by_role("button", name="Search", exact=True).click()
                 invoice_not_found = False
                 ps_wait(page, 1)
@@ -332,8 +341,12 @@ def run_vendor_entry(
         print(f"Run {runid} was cancelled before it started.")
         return runlog
 
-    processed_dir = vendor_path / "Processed"
-    notprocessed_dir = vendor_path / "NotProcessed"
+    if vendor_key == "attach" and not attach_only:
+        processed_dir = vendor_path / "Attached"
+        notprocessed_dir = vendor_path
+    else:
+        processed_dir = vendor_path / "Processed"
+        notprocessed_dir = vendor_path / "NotProcessed"
     processed_dir.mkdir(exist_ok=True)
     notprocessed_dir.mkdir(exist_ok=True)
 
@@ -356,37 +369,65 @@ def run_vendor_entry(
             process_log: Optional[VoucherProcessLog] = None
 
             try:
-                extraction_result = asyncio.run(
-                    run_invoice_extraction(str(invoice), additional_instructions)
-                )
-
-                if not extraction_result:
-                    print(f"Failed extraction: {invoice.name}")
-                    runlog.failures += 1
-                    process_log = VoucherProcessLog(
-                        runid=runid,
-                        filename=invoice.name,
-                        voucher_id="Extraction Failed",
-                        amount=0.0,
-                        invoice="",
-                        status="failure",
+                if vendor_key == "attach":
+                    # For attach-only, we just need minimal invoice data
+                    invoice_data = ExtractedInvoiceData(
+                        invoice_number=invoice.stem,
+                        invoice_date="",
+                        total_amount=0.0,
+                        merchandise_amount=0.0,
+                        shipping_amount=0.0,
+                        sales_tax=0.0,
+                        miscellaneous_amount=0.0,
+                        purchase_order="",
                     )
-                else:
-                    invoice_data = extraction_result['structured_response']
-                    invoice_data.purchase_order = invoice_data.purchase_order.strip()
-                    invoice_data.invoice_date = normalize_date(invoice_data.invoice_date)
-                    if apo_override:
-                        invoice_data.purchase_order = apo_override
 
-                    royal_style = vendor_key in ROYAL_STYLE_VENDORS
                     result = voucher_playwright_bot(
                         invoice_data,
                         filepath=str(invoice),
                         rent_line=rent_line,
                         attach_only=attach_only,
                         test_mode=test_mode,
-                        royal_style_entry=royal_style,
+                        royal_style_entry=False,
+                        generic_attach=True,
                     )
+                    runlog.successes += 1
+                    status = "success"
+                    voucher_id = result.voucher_id
+                    print(f"Moving entered invoice {invoice.name} to Processed.")
+                    shutil.move(str(invoice), processed_dir / invoice.name)
+                else:
+                    extraction_result = asyncio.run(
+                        run_invoice_extraction(str(invoice), additional_instructions)
+                    )
+
+                    if not extraction_result:
+                        print(f"Failed extraction: {invoice.name}")
+                        runlog.failures += 1
+                        process_log = VoucherProcessLog(
+                            runid=runid,
+                            filename=invoice.name,
+                            voucher_id="Extraction Failed",
+                            amount=0.0,
+                            invoice="",
+                            status="failure",
+                        )
+                    else:
+                        invoice_data = extraction_result['structured_response']
+                        invoice_data.purchase_order = invoice_data.purchase_order.strip()
+                        invoice_data.invoice_date = normalize_date(invoice_data.invoice_date)
+                        if apo_override:
+                            invoice_data.purchase_order = apo_override
+
+                        royal_style = vendor_key in ROYAL_STYLE_VENDORS
+                        result = voucher_playwright_bot(
+                            invoice_data,
+                            filepath=str(invoice),
+                            rent_line=rent_line,
+                            attach_only=attach_only,
+                            test_mode=test_mode,
+                            royal_style_entry=royal_style,
+                        )
 
                     runlog.processed += 1
 
@@ -493,6 +534,6 @@ if __name__ == "__main__":
     #runlog = run_vendor_entry("royal", test_mode=False, rent_line="FY26", apo_override="KERNH-APO950043J")
     #runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26", additional_instructions=MOBILE_PROMPT)
     #runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
-    runlog = run_vendor_entry("cdw", test_mode=True, attach_only=True, additional_instructions=CDW_PROMPT)
+    runlog = run_vendor_entry("attach", test_mode=False, attach_only=True)
     #runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26", additional_instructions=CLASS_PROMPT)
 
