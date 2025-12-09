@@ -8,6 +8,8 @@ import io
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langfuse import observe
+
 
 # Load dotenv if needed and get openAI API key from env
 from dotenv import load_dotenv
@@ -30,11 +32,15 @@ def _pdf_to_images(pdf_path: str, dpi: int = 180) -> List[Image.Image]:
 
 
 def _image_to_base64(image: Image.Image) -> str:
+    # Convert PNG RGBA → JPEG compatible RGB
+    if image.mode in ("RGBA", "LA"):
+        image = image.convert("RGB")
+
     buf = io.BytesIO()
     image.save(buf, format="JPEG", quality=85)
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
-
+@observe(name="document_vision_extract")
 def extract_to_schema(
     file_path: str,
     schema: Type[BaseModel],
@@ -85,11 +91,37 @@ def extract_to_schema(
 
 # Example usage:
 if __name__ == "__main__":
-    from app.schemas import ExtractedInvoiceData
-
+    from pydantic import BaseModel
+    from datetime import datetime
+    class DirectDepositExtractResult(BaseModel):
+        emplid: str
+        name: str
+        date: datetime
+        ssn: str
+        bank_name: str
+        routing_number: str
+        bank_account: str
+        checking_account: bool
+        savings_account: bool
+        amount_dollars: float
+        amount_percentage: float
     result = extract_to_schema(
-        "./data/cdw.pdf",
-        ExtractedInvoiceData,
-        prompt="Extract the invoice details as per the schema."
+        "./data/dd.png",
+        DirectDepositExtractResult,
+        prompt="""
+            You are an direct deposit extraction agent.
+            Use the tool to extract raw data from the document.
+            Extract the following fields from the provided direct_deposit document:
+            emplid, name, date, ssn, bank_name, routing_number, bank_account, checking_account, savings_account, amount_dollars, amount_percentage.
+            The ssn field should only contain the last four digits of the social security number.
+            The checking_account and savings_account fields should be booleans indicating whether the bank account is a checking or savings account.
+            The amount_dollars field is the fixed dollar amount for direct deposit, and amount_percentage is the percentage amount for direct deposit. If one of these is not provided, set it to 0.
+            The date field should be converted to YYYY-MM-DD format.
+            emplid will always be a 6 digit number.
+            if checking and savings account are both true, set savings_account to false.
+            if checking and saving account are both false, set checking_account to true.
+            if amount_dollars and amount_percentage are both blank or 0, then set percentage to 100.
+            Return only valid JSON that matches the expected format.
+        """
     )
     print(result.model_dump_json(indent=2))
