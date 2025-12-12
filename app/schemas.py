@@ -118,3 +118,35 @@ class PaylineRunLog(BaseModel):
     processed: int = 0
     successes: int = 0
     failures: int = 0
+
+
+class DirectDepositExtractResult(BaseModel):
+    emplid: str
+    name: str
+    date: datetime
+    ssn: str
+    bank_name: str
+    routing_number: str
+    bank_account: str
+    checking_account: bool
+    savings_account: bool
+    amount_dollars: float
+    amount_percentage: float
+
+
+class DirectDepositProcessLog(BaseModel):
+    runid: str
+    emplid: str
+    name: str
+    bank_name: str
+    routing_number: str
+    bank_account: str
+    amount_dollars: float
+    status: str
+    success: bool
+    message: Optional[str] = None
+
+
+class DepositEntryResult(BaseModel):
+    success: bool
+    message: Optional[str] = None
