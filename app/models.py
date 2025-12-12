@@ -79,3 +79,42 @@ class AgentRegistry(Base):
 
     def __repr__(self) -> str:
         return f"<Agent(id={self.id}, name={self.name})>"
+
+
+class DirectDepositRunLog(Base):
+    __tablename__ = "ai_bot_direct_deposit_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    runid = Column(String(100), unique=True, nullable=False, index=True)
+    processed = Column(Integer, nullable=False, default=0)
+    successes = Column(Integer, nullable=False, default=0)
+    failures = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<DirectDepositRunLog(runid={self.runid}, processed={self.processed}, "
+            f"successes={self.successes}, failures={self.failures})>"
+        )
+
+
+class DirectDepositProcessLog(Base):
+    __tablename__ = "ai_bot_direct_deposit_process_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    runid = Column(String(100), index=True)
+    emplid = Column(String(50), index=True)
+    name = Column(String(255), index=True)
+    bank_name = Column(String(255))
+    routing_number = Column(String(50))
+    bank_account = Column(String(50))
+    amount_dollars = Column(Float)
+    status = Column(String(50), index=True)  # e.g., 'success', 'failure'
+    success = Column(Boolean, default=False)
+    message = Column(String(500), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<DirectDepositProcessLog(id={self.id}, runid={self.runid}, status={self.status})>"

@@ -132,6 +132,7 @@ class DirectDepositExtractResult(BaseModel):
     savings_account: bool
     amount_dollars: float
     amount_percentage: float
+    confidence: float = 0.0
 
 
 class DirectDepositProcessLog(BaseModel):

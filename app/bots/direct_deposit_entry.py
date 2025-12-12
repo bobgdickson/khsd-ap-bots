@@ -25,7 +25,12 @@ from app.bots.utils.misc import (
 )
 from app.bots.agents.multimodal import extract_to_schema
 from app.bots.prompts import CDW_PROMPT, CLASS_PROMPT, MOBILE_PROMPT
-from app.schemas import DirectDepositExtractResult, DepositEntryResult, VoucherRunLog, DirectDepositProcessLog
+from app.schemas import (
+    DirectDepositExtractResult,
+    DepositEntryResult,
+    VoucherRunLog,
+    DirectDepositProcessLog as DDProcessSchema,
+)
 if sys.platform.startswith("win"):
     try:
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -39,8 +44,9 @@ load_dotenv()
 USERNAME = os.getenv("PEOPLESOFT_USERNAME")
 PASSWORD = os.getenv("PEOPLESOFT_PASSWORD")
 
+
 def log_direct_deposit_process(runid, emplid, name, bank_name, routing_number, bank_account, amount_dollars, status, message=None):
-    log_entry = DirectDepositProcessLog(
+    log_entry = DDProcessSchema(
         runid=runid,
         emplid=emplid,
         name=name,
@@ -49,6 +55,7 @@ def log_direct_deposit_process(runid, emplid, name, bank_name, routing_number, b
         bank_account=bank_account,
         amount_dollars=amount_dollars,
         status=status,
+        success=status == "success",
         message=message,
     )
     print(f"Direct Deposit Log: {log_entry}")
@@ -104,6 +111,15 @@ def deposit_playwright_bot(
             ps_find_retry(page, "Empl ID").fill(deposit_data.emplid)
             page.locator("iframe[name=\"TargetContent\"]").content_frame.get_by_role("button", name="Search", exact=True).click()
             ps_wait(page, 1)
+            try:
+                ps_target_frame(page).get_by_text(
+                                "No matching values were found"
+                            ).wait_for(timeout=2000)
+                emplid_not_found = True
+                print("Empl ID not found.")
+                return DepositEntryResult(success=False, message=f"Empl ID {deposit_data.emplid} not found.")
+            except PlaywrightTimeoutError:
+                emplid_not_found = False
             #if the status field is not blank, then click the "Add a new row at row" button
             if ps_target_frame(page).get_by_label("Status").input_value() != "":
                 page.frame(name="TargetContent")
@@ -139,9 +155,26 @@ def deposit_playwright_bot(
             ps_find_retry(page, "Account Number").fill(deposit_data.bank_account)
             ps_target_frame(page).get_by_role("button", name="Save", exact=True).click()
             ps_wait(page, 3)
-
+            # Check for modal talking about data exists, don't use handle_modal_sequence here
+            try:
+                modal_text = handle_peoplesoft_alert(page, timeout=5000)
+                if "Data being added conflicts with existing data" in modal_text:
+                    print(f"Deposit for Empl ID {deposit_data.emplid} already exists.")
+                    # close browser
+                    browser.close()
+                    return DepositEntryResult(success=False, message=f"Deposit for Empl ID {deposit_data.emplid} already exists.")
+                else:
+                    print(f"Modal after save: {modal_text}")
+                    pop_up = True
+                    #TODO Check with Benita and co if modal should be failed or not
+            except PlaywrightTimeoutError:
+                pass
             print(str(deposit_data.emplid), " Success")
-            return DepositEntryResult(success=True, message=f"Empl ID: {deposit_data.emplid}")
+            if pop_up:
+                message=f"Deposit for Empl ID {deposit_data.emplid} entered with modal popup: {modal_text}"
+            else:
+                message=f"Deposit for Empl ID {deposit_data.emplid} entered successfully."
+            return DepositEntryResult(success=True, message=message)
 
         finally:
             if "browser" in locals():
@@ -175,14 +208,20 @@ def run_direct_deposit_entry(
         context={"vendor_key": vendor_key},
     )
     runlog = VoucherRunLog(runid=runid, vendor=vendor_key)
-    process_logs: list[DirectDepositProcessLog] = []
+    # Persist run start in dedicated table
+    db = database.SessionLocal()
+    try:
+        db.add(models.DirectDepositRunLog(runid=runid, processed=0, successes=0, failures=0))
+        db.commit()
+    finally:
+        db.close()
 
     if is_run_cancel_requested(runid):
         update_bot_run_status(runid, "cancelled", message="Cancelled before start")
         print(f"Run {runid} was cancelled before it started.")
         return runlog
 
-    processed_dir = file_path / "Attached"
+    processed_dir = file_path / "Completed"
     processed_dir.mkdir(exist_ok=True)
 
     update_bot_run_status(
@@ -201,7 +240,7 @@ def run_direct_deposit_entry(
                 cancelled = True
                 break
 
-            process_log: Optional[DirectDepositProcessLog] = None
+            process_log: Optional[DDProcessSchema] = None
             system_prompt="""
             You are a direct deposit extraction agent. 
             Use the tool to extract raw data from the document.
@@ -216,14 +255,16 @@ def run_direct_deposit_entry(
             if checking and savings account are both true, set savings_account to false.
             if checking and saving account are both false, set checking_account to true.
             if amount_dollars and amount_percentage are both blank or 0, then set percentage to 100.
+            Include a confidence score (0-1) for the extracted fields.
             Return only valid JSON that matches the expected format.
             """
             extraction_result = extract_to_schema(str(deposit), DirectDepositExtractResult, prompt=system_prompt)
-            #todo skip if percentage is not 100
+
+            result: DepositEntryResult | None = None
             if not extraction_result:
                 print(f"Failed extraction: {deposit.name}")
                 runlog.failures += 1
-                process_log = DirectDepositProcessLog(
+                process_log = DDProcessSchema(
                     runid=runid,
                     emplid="",
                     name="",
@@ -233,6 +274,20 @@ def run_direct_deposit_entry(
                     amount_dollars=0.0,
                     status="failure",
                     message="Extraction Failed",
+                )
+            elif extraction_result.amount_percentage < 100:
+                print(f"Skipping non-100% deposit: {deposit.name} with {extraction_result.amount_percentage}%")
+                runlog.failures += 1
+                process_log = DDProcessSchema(
+                    runid=runid,
+                    emplid=extraction_result.emplid,
+                    name=extraction_result.name,
+                    bank_name=extraction_result.bank_name,
+                    routing_number=extraction_result.routing_number,
+                    bank_account=extraction_result.bank_account,
+                    amount_dollars=extraction_result.amount_dollars,
+                    status="failure",
+                    message=f"Skipped non-100% deposit with {extraction_result.amount_percentage}%",
                 )
             else:
                 deposit_data = extraction_result
@@ -246,81 +301,72 @@ def run_direct_deposit_entry(
                     test_mode=test_mode,
                 )
 
-                log_direct_deposit_process(
-                    runid=generate_runid(),
+            runlog.processed += 1
+
+            if result and result.success:
+                runlog.successes += 1
+                status = "success"
+                print(f"Moving entered deposits {deposit.name} to Processed.")
+                shutil.move(str(deposit), processed_dir / deposit.name)
+                process_log = process_log or DDProcessSchema(
+                    runid=runid,
                     emplid=deposit_data.emplid,
                     name=deposit_data.name,
                     bank_name=deposit_data.bank_name,
                     routing_number=deposit_data.routing_number,
                     bank_account=deposit_data.bank_account,
                     amount_dollars=deposit_data.amount_dollars,
-                    status="Success",
+                    status=status,
+                    success=True,
                 )
-
-            runlog.processed += 1
-
-            if result.success:
-                runlog.successes += 1
-                status = "success"
-                print(f"Moving entered deposits {deposit.name} to Processed.")
-                shutil.move(str(deposit), processed_dir / deposit.name)
             else:
                 runlog.failures += 1
                 status = "failure"
                 print(f"Not moving failed deposit {deposit.name}.")
+                process_log = process_log or DDProcessSchema(
+                    runid=runid,
+                    emplid=deposit_data.emplid if extraction_result else "",
+                    name=deposit_data.name if extraction_result else "",
+                    bank_name=deposit_data.bank_name if extraction_result else "",
+                    routing_number=deposit_data.routing_number if extraction_result else "",
+                    bank_account=deposit_data.bank_account if extraction_result else "",
+                    amount_dollars=deposit_data.amount_dollars if extraction_result else 0.0,
+                    status=status,
+                    success=False,
+                    message=result.message if result else "Entry Failed",
+                )
 
-            process_log = DirectDepositProcessLog(
-                runid=runid,
-                emplid=deposit_data.emplid,
-                name=deposit_data.name,
-                bank_name=deposit_data.bank_name,
-                routing_number=deposit_data.routing_number,
-                bank_account=deposit_data.bank_account,
-                amount_dollars=deposit_data.amount_dollars,
-                status=status,
-            )
+            if process_log:
+                db = database.SessionLocal()
+                try:
+                    payload = process_log.model_dump()
+                    orm_row = models.DirectDepositProcessLog(**payload)
+                    db.add(orm_row)
+                    db.commit()
+                finally:
+                    db.close()
 
     except Exception as e:
-        log_direct_deposit_process(
-            runid=generate_runid(
-                vendor_key,
-                test_mode=test_mode,
-                bot_name="direct_deposit_entry",
-                context={"vendor_key": vendor_key},
-            ),
-            emplid=deposit_data.emplid,
-            name=deposit_data.name,
-            bank_name=deposit_data.bank_name,
-            routing_number=deposit_data.routing_number,
-            bank_account=deposit_data.bank_account,
-            amount_dollars=deposit_data.amount_dollars,
-            status="Failure",
-            message=str(e),
-        )
-        runlog.failures += 1
-        process_log = DirectDepositProcessLog(
-            runid=runid,
-            emplid=deposit_data.emplid,
-            name=deposit_data.name,
-            bank_name=deposit_data.bank_name,
-            routing_number=deposit_data.routing_number,
-            bank_account=deposit_data.bank_account,
-            amount_dollars=deposit_data.amount_dollars,
-            status="failure",
-            message=str(e),
-        )
-
-        process_logs.append(process_log)
-
-        # Write to DB
-        print(process_log)
+        print("❌ Unexpected error during direct deposit entry")
+        print(e)
         db = database.SessionLocal()
         try:
-            payload = process_log.model_dump()
-            orm_row = models.BotProcessLog(**payload)
+            failure_log = DDProcessSchema(
+                runid=runid,
+                emplid=deposit_data.emplid if 'deposit_data' in locals() else "",
+                name=getattr(deposit_data, "name", "") if 'deposit_data' in locals() else "",
+                bank_name=getattr(deposit_data, "bank_name", "") if 'deposit_data' in locals() else "",
+                routing_number=getattr(deposit_data, "routing_number", "") if 'deposit_data' in locals() else "",
+                bank_account=getattr(deposit_data, "bank_account", "") if 'deposit_data' in locals() else "",
+                amount_dollars=getattr(deposit_data, "amount_dollars", 0.0) if 'deposit_data' in locals() else 0.0,
+                status="failure",
+                success=False,
+                message=str(e),
+            )
+            orm_row = models.DirectDepositProcessLog(**failure_log.model_dump())
             db.add(orm_row)
             db.commit()
-            print("Logged to database.")
+            runlog.failures += 1
         finally:
             db.close()
 
@@ -354,6 +400,26 @@ def run_direct_deposit_entry(
             },
         )
         print(f"Completed run {runid}: {runlog.successes} success, {runlog.duplicates} duplicates, {runlog.failures} failures")
+
+    # Persist final run counts
+    db = database.SessionLocal()
+    try:
+        row = db.query(models.DirectDepositRunLog).filter_by(runid=runid).first()
+        if row:
+            row.processed = runlog.processed
+            row.successes = runlog.successes
+            row.failures = runlog.failures
+        else:
+            row = models.DirectDepositRunLog(
+                runid=runid,
+                processed=runlog.processed,
+                successes=runlog.successes,
+                failures=runlog.failures,
+            )
+            db.add(row)
+        db.commit()
+    finally:
+        db.close()
 
     return runlog
 
