@@ -210,3 +210,11 @@ data/
 
 auth.json 
 user_data/
+
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.pdf

@@ -10,3 +10,6 @@ MOBILE_PROMPT = """PO NUMBER RULES (Mobile Modular):
 - The PO number will often have the form of KERNH-CON12345
 """
 FIC_PROMPT = """Scholarship Type: FIC"""
+GRAINGER_PROMPT="""If the PO does not start with APO and is in the 95 series ending with a letter, prefix it with APO, the current active APO is APO950011J.
+A fully numeric PO should be prefixed with 0's to make it a 10 digit number.
+If you cannot find a PO number use APO950011J as the default as long as the amount is under $500."""
