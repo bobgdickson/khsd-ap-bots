@@ -1,7 +1,6 @@
 ﻿from pathlib import Path
 from typing import Optional
-import os, time, asyncio, shutil, sys
-from dotenv import load_dotenv
+import time, asyncio, shutil, sys, os
 from playwright.sync_api import sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from app.bots.utils.ps import (
@@ -14,6 +13,7 @@ from app.bots.utils.ps import (
     find_rent_line,
     get_voucher_id,
     handle_modal_sequence,
+    ps_login_and_navigate,
 )
 from app.bots.utils.misc import (
     generate_runid,
@@ -23,8 +23,9 @@ from app.bots.utils.misc import (
     update_bot_run_status,
 )
 from app.bots.agents.invoice_extract import run_invoice_extraction
-from app.bots.prompts import CDW_PROMPT, CLASS_PROMPT, MOBILE_PROMPT
+from app.bots.prompts import CDW_PROMPT, CLASS_PROMPT, MOBILE_PROMPT, GRAINGER_PROMPT
 from app.schemas import ExtractedInvoiceData, VoucherEntryResult, VoucherRunLog, VoucherProcessLog
+from app.config import get_settings
 if sys.platform.startswith("win"):
     try:
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -32,6 +33,7 @@ if sys.platform.startswith("win"):
         pass
 from app import models, database
 
+# TODO: Handle server deployment for file access
 def get_vendor_directory(vendor_key: str, test_mode: bool) -> Path:
     if test_mode:
         base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents\InvoiceProcessing"
@@ -42,6 +44,7 @@ def get_vendor_directory(vendor_key: str, test_mode: bool) -> Path:
             "floyds": "Floyds",
             "seq": "Sequoia",
             "cdw": "CDW",
+            "grainger": "Grainger",
         }
     else:
         base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents - Fiscal\Accounts Payable"
@@ -53,17 +56,17 @@ def get_vendor_directory(vendor_key: str, test_mode: bool) -> Path:
             "seq": "Sequioa Paint",
             "cdw": "CDW",
             "attach": "Invoices scanned, need to be attached",
+            "grainger": "Grainger",
         }
     return Path(base_dir) / vendor_dirs[vendor_key]
 
 
-load_dotenv()
-
-USERNAME = os.getenv("PEOPLESOFT_USERNAME")
-PASSWORD = os.getenv("PEOPLESOFT_PASSWORD")
+settings = get_settings()
+USERNAME = settings.peoplesoft_username
+PASSWORD = settings.peoplesoft_password
 
 # Vendors that require "royal style entry"
-ROYAL_STYLE_VENDORS = {"royal", "floyds"}
+ROYAL_STYLE_VENDORS = {"royal", "floyds", "grainger"}
 
 
 def voucher_playwright_bot(
@@ -79,15 +82,12 @@ def voucher_playwright_bot(
     apo_flag = False
 
     if test_mode:
-        PS_BASE = os.getenv("PEOPLESOFT_TEST_ENV")
-        PS_BASE_URL = (
-            os.getenv("PEOPLESOFT_TEST_ENV", "https://kdfq92.hosted.cherryroad.com/")
-            + "psp/KDFQ92"
-        )
+        PS_BASE = settings.peoplesoft_test_env
+        PS_BASE_URL = (PS_BASE + "psp/KDFQ92")
         print(f"Running in TEST mode against {PS_BASE_URL}")
     else:
-        PS_BASE = os.getenv("PEOPLESOFT_ENV")
-        PS_BASE_URL = os.getenv("PEOPLESOFT_ENV") + "psp/KDFP92"
+        PS_BASE = settings.peoplesoft_env
+        PS_BASE_URL = PS_BASE + "psp/KDFP92"
         print(f"Running in PRODUCTION mode against {PS_BASE_URL}")
 
     if not invoice_data:
@@ -102,23 +102,11 @@ def voucher_playwright_bot(
             # --- Login ---
             browser = p.chromium.launch(headless=False)
             page = browser.new_page()
-            page.set_viewport_size({"width": 1920, "height": 1080})
-            page.goto(PS_BASE, timeout=60000)
-
-            page.wait_for_selector("input#i0116")
-            page.fill("input#i0116", USERNAME)
-            page.click('input[type="submit"]')
-
-            page.wait_for_selector("input#i0118")
-            page.fill("input#i0118", PASSWORD)
-            page.click('input[type="submit"]')
-            page.wait_for_load_state("networkidle")
-
-            page.goto(
+            destination = (
                 PS_BASE_URL
                 + "/EMPLOYEE/ERP/c/ENTER_VOUCHER_INFORMATION.VCHR_EXPRESS.GBL"
             )
-            page.wait_for_load_state("networkidle")
+            ps_login_and_navigate(page, PS_BASE, USERNAME, PASSWORD, destination)
 
             # Full Voucher Entry Flow
             if not attach_only:
@@ -149,9 +137,11 @@ def voucher_playwright_bot(
                 else:
                     bu = "KERNH"
                     po = invoice_data.purchase_order
-
+                
+                # Royal Style enters PO directly at Voucher creation screen
                 if royal_style_entry and invoice_data.purchase_order:
                     ps_find_retry(page, "PO Business Unit").fill(bu)
+                    # This handles APO processing, to override line amount later
                     if "APO" in invoice_data.purchase_order:
                         apo_flag = True
                     po_input.fill(po)
@@ -419,7 +409,11 @@ def run_vendor_entry(
                         if apo_override:
                             invoice_data.purchase_order = apo_override
 
-                        royal_style = vendor_key in ROYAL_STYLE_VENDORS
+                        # Check if vendor_key is in the royal style set which will enter PO at voucher screen
+                        royal_style = False
+                        if vendor_key in ROYAL_STYLE_VENDORS:
+                            royal_style = True
+
                         result = voucher_playwright_bot(
                             invoice_data,
                             filepath=str(invoice),
@@ -534,6 +528,6 @@ if __name__ == "__main__":
     #runlog = run_vendor_entry("royal", test_mode=False, rent_line="FY26", apo_override="KERNH-APO950043J")
     #runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26", additional_instructions=MOBILE_PROMPT)
     #runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
-    runlog = run_vendor_entry("attach", test_mode=False, attach_only=True)
+    #runlog = run_vendor_entry("attach", test_mode=False, attach_only=True)
     #runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26", additional_instructions=CLASS_PROMPT)
-
+    runlog = run_vendor_entry("grainger", test_mode=True, additional_instructions=GRAINGER_PROMPT)

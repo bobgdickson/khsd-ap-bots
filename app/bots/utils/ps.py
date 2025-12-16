@@ -190,3 +190,31 @@ def handle_modal_sequence(page, labels: list[str], file: str | None = None):
         else:
             button.click()
         page.wait_for_timeout(1000)
+
+
+def ps_login_and_navigate(page, base_url: str, username: str, password: str, destination: str, headless: bool = False):
+    """
+    Log into PeopleSoft using the standard AAD flow, then navigate to the given destination path.
+    `destination` should be the full URL (base + path) you want to land on.
+    """
+    browser = None
+    try:
+        browser = page.context.browser
+    except Exception:
+        pass
+
+    page.set_viewport_size({"width": 1920, "height": 1080})
+    page.goto(base_url, timeout=60000)
+
+    page.wait_for_selector("input#i0116")
+    page.fill("input#i0116", username)
+    page.click('input[type="submit"]')
+
+    page.wait_for_selector("input#i0118")
+    page.fill("input#i0118", password)
+    page.click('input[type="submit"]')
+    page.wait_for_load_state("networkidle")
+
+    page.goto(destination)
+    page.wait_for_load_state("networkidle")
+    return page
