@@ -45,6 +45,7 @@ def get_vendor_directory(vendor_key: str, test_mode: bool) -> Path:
             "seq": "Sequoia",
             "cdw": "CDW",
             "grainger": "Grainger",
+            "vestis": "Vestis",
         }
     else:
         base_dir = r"C:\Users\Bob_Dickson\OneDrive - Kern High School District\Documents - Fiscal\Accounts Payable"
@@ -57,6 +58,7 @@ def get_vendor_directory(vendor_key: str, test_mode: bool) -> Path:
             "cdw": "CDW",
             "attach": "Invoices scanned, need to be attached",
             "grainger": "Grainger",
+            "vestis": "Vestis",
         }
     return Path(base_dir) / vendor_dirs[vendor_key]
 
@@ -390,7 +392,7 @@ def run_vendor_entry(
                     extraction_result = asyncio.run(
                         run_invoice_extraction(str(invoice), additional_instructions)
                     )
-
+                    
                     if not extraction_result:
                         print(f"Failed extraction: {invoice.name}")
                         runlog.failures += 1
@@ -408,6 +410,22 @@ def run_vendor_entry(
                         invoice_data.invoice_date = normalize_date(invoice_data.invoice_date)
                         if apo_override:
                             invoice_data.purchase_order = apo_override
+
+                        # Check Grainger for exact APO950011J only process those, print skip message otherwise
+                        if vendor_key == "grainger":
+                            if "APO950011J" not in invoice_data.purchase_order:
+                                print(f"Skipping Grainger invoice {invoice.name} without APO950011J PO.")
+                                runlog.failures += 1
+                                process_log = VoucherProcessLog(
+                                    runid=runid,
+                                    filename=invoice.name,
+                                    voucher_id="Skipped - No APO950011J",
+                                    amount=invoice_data.total_amount,
+                                    invoice=invoice_data.invoice_number,
+                                    status="failure",
+                                )
+                                process_logs.append(process_log)
+                                continue
 
                         # Check if vendor_key is in the royal style set which will enter PO at voucher screen
                         royal_style = False
@@ -528,6 +546,7 @@ if __name__ == "__main__":
     #runlog = run_vendor_entry("royal", test_mode=False, rent_line="FY26", apo_override="KERNH-APO950043J")
     #runlog = run_vendor_entry("mobile", test_mode=False, rent_line="FY26", additional_instructions=MOBILE_PROMPT)
     #runlog = run_vendor_entry("floyds", test_mode=False, rent_line="FY26", apo_override="KERNH-APO962523J")
-    #runlog = run_vendor_entry("attach", test_mode=False, attach_only=True)
+    runlog = run_vendor_entry("attach", test_mode=False, attach_only=True)
     #runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26", additional_instructions=CLASS_PROMPT)
-    runlog = run_vendor_entry("grainger", test_mode=True, additional_instructions=GRAINGER_PROMPT)
+    #runlog = run_vendor_entry("grainger", test_mode=True, additional_instructions=GRAINGER_PROMPT)
+    #runlog = run_vendor_entry("vestis", test_mode=True)

@@ -192,6 +192,29 @@ def handle_modal_sequence(page, labels: list[str], file: str | None = None):
         page.wait_for_timeout(1000)
 
 
+def ps_find_div(page, label_or_id, timeout: int = 3000):
+    """
+    Find a div/span/label-like element by id or visible text inside TargetContent.
+    Useful for non-input elements (e.g., win0divVCHR_MTCH_WS4_LINE_NBR$0).
+    """
+    frame = ps_target_frame(page)
+    # Try by id first
+    try:
+        loc = frame.locator(f"[id='{label_or_id}']")
+        loc.wait_for(timeout=timeout)
+        return loc
+    except Exception:
+        pass
+    # Try by visible text
+    try:
+        loc = frame.get_by_text(label_or_id, exact=False)
+        loc.wait_for(timeout=timeout)
+        return loc
+    except Exception:
+        pass
+    raise Exception(f"❌ Could not find div/label '{label_or_id}' by id or text.")
+
+
 def ps_login_and_navigate(page, base_url: str, username: str, password: str, destination: str, headless: bool = False):
     """
     Log into PeopleSoft using the standard AAD flow, then navigate to the given destination path.
