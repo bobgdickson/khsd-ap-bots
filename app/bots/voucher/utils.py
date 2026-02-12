@@ -13,7 +13,9 @@ def is_numeric_voucher(voucher_id: str | None) -> bool:
 def move_invoice_file(filepath: str | Path, result: dict, processed_dir: Path | None, duplicates_dir: Path | None):
     """
     Move file based on result status:
-    - Numeric voucher_id or duplicate -> move to processed/duplicates respectively.
+    - Numeric voucher_id -> processed
+    - duplicate -> duplicates
+    - ReviewBlocked -> For_Review
     - Otherwise leave in place.
     """
     if processed_dir is None or duplicates_dir is None:
@@ -21,6 +23,8 @@ def move_invoice_file(filepath: str | Path, result: dict, processed_dir: Path | 
 
     processed_dir.mkdir(exist_ok=True)
     duplicates_dir.mkdir(exist_ok=True)
+    review_dir = processed_dir.parent / "For_Review"
+    review_dir.mkdir(exist_ok=True)
 
     voucher_id = result.get("voucher_id")
     duplicate = result.get("duplicate", False)
@@ -31,6 +35,9 @@ def move_invoice_file(filepath: str | Path, result: dict, processed_dir: Path | 
         shutil.move(str(src), dest)
     elif is_numeric_voucher(voucher_id):
         dest = processed_dir / src.name
+        shutil.move(str(src), dest)
+    elif voucher_id == "ReviewBlocked":
+        dest = review_dir / src.name
         shutil.move(str(src), dest)
 
 

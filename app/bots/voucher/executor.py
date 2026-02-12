@@ -1,6 +1,6 @@
 from pathlib import Path
 import re
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, Playwright
 
 from app.bots.utils.ps import (
     handle_alerts,
@@ -38,7 +38,7 @@ def date_to_ps_format(date_str: str) -> str:
             continue
     raise ValueError(f"Unrecognized date format: {date_str}")
 
-def login(p, test_mode: bool = False):
+def login(p: Playwright, test_mode: bool = False):
     """Login to PeopleSoft and navigate to voucher entry page."""
     if test_mode:
         base_url = settings.peoplesoft_test_env
@@ -228,14 +228,20 @@ def save_voucher(page):
     }
 
 
-def execute_voucher_entry(plan: VoucherEntryPlan, test_mode: bool = True, page=None):
+def execute_voucher_entry(plan: VoucherEntryPlan, test_mode: bool = True, page=None, playwright: Playwright | None = None):
     """
     Execute voucher entry. If a page is provided, reuse it; otherwise create a new Playwright session.
     """
     owns_browser = False
+    owns_playwright = False
+    p = None
     if page is None:
         owns_browser = True
-        p = sync_playwright().start()
+        if playwright is not None:
+            p = playwright
+        else:
+            p = sync_playwright().start()
+            owns_playwright = True
         page = login(p, test_mode)
     try:
         enter_header_fields(page, plan.invoice)
@@ -257,6 +263,11 @@ def execute_voucher_entry(plan: VoucherEntryPlan, test_mode: bool = True, page=N
                 page.context.browser.close()
             except Exception:
                 pass
+            if owns_playwright and p:
+                try:
+                    p.stop()
+                except Exception:
+                    pass
 
 
 if __name__ == "__main__":

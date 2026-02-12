@@ -52,3 +52,4 @@ class VoucherEntryPlan(BaseModel):
 class ExecutionDecision(BaseModel):
     execute: bool
     reason: str
+    short_reason: str | None = None
