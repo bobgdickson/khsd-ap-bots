@@ -1,13 +1,14 @@
 ﻿import os
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..bots.utils.misc import generate_runid, update_bot_run_status
 from ..bots.voucher_entry import get_vendor_directory, run_vendor_entry
+from ..services.auth import get_current_user
 
-router = APIRouter(prefix="/bots/voucher-entry", tags=["bots"])
+router = APIRouter(prefix="/bots/voucher-entry", tags=["bots"], dependencies=[Depends(get_current_user)])
 
 RUN_BOTS_LOCALLY = os.getenv("RUN_BOTS_LOCALLY", "false").lower() in {"1", "true", "yes", "y"}
 

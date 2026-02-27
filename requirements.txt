@@ -1,5 +1,6 @@
 fastapi
 pydantic
+pydantic-settings
 sqlalchemy
 pytest
 pyodbc
@@ -13,3 +14,4 @@ langfuse
 pymupdf
 python-dateutil
 pytesseract
+PyJWT[crypto]

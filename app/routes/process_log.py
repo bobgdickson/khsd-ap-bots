@@ -5,8 +5,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import database, models
+from ..services.auth import get_current_user
 
-router = APIRouter(prefix="/process-logs", tags=["process_logs"])
+router = APIRouter(prefix="/process-logs", tags=["process_logs"], dependencies=[Depends(get_current_user)])
 
 
 class BotProcessLogOut(BaseModel):

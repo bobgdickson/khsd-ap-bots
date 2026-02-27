@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     # OCR
     tesseract_cmd: Optional[str] = None
 
+    # Entra ID (Azure AD)
+    azure_tenant_id: Optional[str] = None
+    azure_client_id: Optional[str] = None
+    azure_api_uri: Optional[str] = None
+
+    # Comma-separated list of frontend origins for CORS
+    frontend_origins: str = "http://localhost:3000"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -41,3 +49,6 @@ def get_settings() -> Settings:
     Cached settings loader. Use get_settings() once and reuse the object.
     """
     return Settings()
+
+
+settings = get_settings()

@@ -1,99 +1,87 @@
 "use client";
 
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+import { useRouter, useSearchParams } from "next/navigation";
+
+import { InteractionStatus } from "@azure/msal-browser";
+import { useIsAuthenticated, useMsal } from "@azure/msal-react";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { z } from "zod";
 
+import { setAuthCookie } from "@/auth/auth-cookie";
+import { fetchApiMe } from "@/auth/entra-api";
+import { loginRequest } from "@/auth/entra-auth";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
-
-const FormSchema = z.object({
-  email: z.string().email({ message: "Please enter a valid email address." }),
-  password: z.string().min(6, { message: "Password must be at least 6 characters." }),
-  remember: z.boolean().optional(),
-});
 
 export function LoginForm() {
-  const form = useForm<z.infer<typeof FormSchema>>({
-    resolver: zodResolver(FormSchema),
-    defaultValues: {
-      email: "",
-      password: "",
-      remember: false,
-    },
-  });
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTo = useMemo(() => searchParams.get("returnTo") ?? "/dashboard/bots", [searchParams]);
 
-  const onSubmit = async (data: z.infer<typeof FormSchema>) => {
-    toast("You submitted the following values", {
-      description: (
-        <pre className="mt-2 w-[320px] rounded-md bg-neutral-950 p-4">
-          <code className="text-white">{JSON.stringify(data, null, 2)}</code>
-        </pre>
-      ),
-    });
+  const { instance, accounts, inProgress } = useMsal();
+  const isAuthenticated = useIsAuthenticated();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSyncingRef = useRef(false);
+
+  useEffect(() => {
+    if (inProgress !== InteractionStatus.None || !isAuthenticated || isSyncingRef.current) {
+      return;
+    }
+
+    const account = instance.getActiveAccount() ?? accounts.at(0);
+    if (!account) {
+      return;
+    }
+
+    isSyncingRef.current = true;
+
+    const syncApiSession = async () => {
+      try {
+        instance.setActiveAccount(account);
+        const meResponse = await fetchApiMe(instance, account);
+        if (!meResponse.ok) {
+          throw new Error(`API auth check failed (${meResponse.status})`);
+        }
+        setAuthCookie();
+        router.replace(returnTo);
+      } catch {
+        isSyncingRef.current = false;
+        setIsSubmitting(false);
+        toast.error("Microsoft login worked, but API auth failed. Check Entra scope/audience config.");
+      }
+    };
+
+    void syncApiSession();
+  }, [accounts, inProgress, instance, isAuthenticated, returnTo, router]);
+
+  const handleMicrosoftLogin = async () => {
+    setIsSubmitting(true);
+    try {
+      await instance.loginRedirect(loginRequest);
+    } catch {
+      setIsSubmitting(false);
+      toast.error("Unable to start Microsoft sign-in.");
+    }
   };
 
+  const isBusy = isSubmitting || inProgress !== InteractionStatus.None;
+
   return (
-    <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-        <FormField
-          control={form.control}
-          name="email"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Email Address</FormLabel>
-              <FormControl>
-                <Input id="email" type="email" placeholder="you@example.com" autoComplete="email" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name="password"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Password</FormLabel>
-              <FormControl>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="••••••••"
-                  autoComplete="current-password"
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name="remember"
-          render={({ field }) => (
-            <FormItem className="flex flex-row items-center">
-              <FormControl>
-                <Checkbox
-                  id="login-remember"
-                  checked={field.value}
-                  onCheckedChange={field.onChange}
-                  className="size-4"
-                />
-              </FormControl>
-              <FormLabel htmlFor="login-remember" className="text-muted-foreground ml-1 text-sm font-medium">
-                Remember me for 30 days
-              </FormLabel>
-            </FormItem>
-          )}
-        />
-        <Button className="w-full" type="submit">
-          Login
-        </Button>
-      </form>
-    </Form>
+    <div className="space-y-4">
+      <Button className="w-full" type="button" onClick={handleMicrosoftLogin} disabled={isBusy}>
+        {isBusy ? (
+          <span className="inline-flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Signing in...
+          </span>
+        ) : (
+          "Sign in with Microsoft"
+        )}
+      </Button>
+      <p className="text-muted-foreground text-center text-xs">
+        Use your KHSD Microsoft account. Access is validated against the API after sign-in.
+      </p>
+    </div>
   );
 }

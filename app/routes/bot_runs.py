@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session
 
 from .. import database, models
 from ..schemas import BotRunCancelRequest, BotRunOut
+from ..services.auth import get_current_user
 
-router = APIRouter(prefix="/bot-runs", tags=["bot_runs"])
+router = APIRouter(prefix="/bot-runs", tags=["bot_runs"], dependencies=[Depends(get_current_user)])
 
 
 @router.get("", response_model=List[BotRunOut])
