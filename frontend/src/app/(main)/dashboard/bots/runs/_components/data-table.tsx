@@ -2,12 +2,13 @@
 
 import * as React from "react";
 
+import { useMsal } from "@azure/msal-react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import type { ColumnDef } from "@tanstack/react-table";
 import { z } from "zod";
-import { useRouter } from "next/navigation";
-import { apiClient } from "@/lib/api/client";
-import { toast } from "sonner";
 
+import { authFetch, getActiveAccount } from "@/auth/api-client";
 import { DataTable as DataTableNew } from "@/components/data-table/data-table";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { DataTableViewOptions } from "@/components/data-table/data-table-view-options";
@@ -19,8 +20,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDataTableInstance } from "@/hooks/use-data-table-instance";
 
-import { createTableColumns, TableRow } from "./columns";
 import { dashboardConfig } from "../config";
+import { createTableColumns, TableRow } from "./columns";
 import { tableSchema } from "./schema";
 
 /**
@@ -28,6 +29,7 @@ import { tableSchema } from "./schema";
  */
 export function DataTable({ data: initialData }: { data: z.infer<typeof tableSchema>[] }) {
   const router = useRouter();
+  const { instance, accounts } = useMsal();
   const [data, setData] = React.useState(() => initialData);
   const [cancellingRunId, setCancellingRunId] = React.useState<string | null>(null);
 
@@ -46,7 +48,18 @@ export function DataTable({ data: initialData }: { data: z.infer<typeof tableSch
 
       setCancellingRunId(runid);
       try {
-        await apiClient.post(`/bot-runs/${encodeURIComponent(runid)}/cancel`, { reason: "Cancelled from dashboard" });
+        const account = getActiveAccount(instance, accounts);
+        if (!account) {
+          throw new Error("No active Microsoft account found.");
+        }
+
+        const response = await authFetch(instance, account, `/bot-runs/${encodeURIComponent(runid)}/cancel`, {
+          method: "POST",
+          body: JSON.stringify({ reason: "Cancelled from dashboard" }),
+        });
+        if (!response.ok) {
+          throw new Error(`Cancel failed (${response.status})`);
+        }
 
         setData((prev) =>
           prev.map((item) => {
@@ -77,7 +90,7 @@ export function DataTable({ data: initialData }: { data: z.infer<typeof tableSch
         setCancellingRunId(null);
       }
     },
-    [router],
+    [accounts, instance, router],
   );
 
   const actionColumn = React.useMemo(() => {

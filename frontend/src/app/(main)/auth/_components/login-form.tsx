@@ -10,6 +10,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { setAuthCookie } from "@/auth/auth-cookie";
+import { authDebugLog, getErrorMessage, toErrorDetails } from "@/auth/debug-log";
 import { fetchApiMe } from "@/auth/entra-api";
 import { loginRequest } from "@/auth/entra-auth";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ export function LoginForm() {
 
     const account = instance.getActiveAccount() ?? accounts.at(0);
     if (!account) {
+      void authDebugLog("login.sync_skipped_no_account");
       return;
     }
 
@@ -38,17 +40,24 @@ export function LoginForm() {
 
     const syncApiSession = async () => {
       try {
+        await authDebugLog("login.sync_start", {
+          username: account.username,
+          tenantId: account.tenantId,
+          returnTo,
+        });
         instance.setActiveAccount(account);
         const meResponse = await fetchApiMe(instance, account);
         if (!meResponse.ok) {
           throw new Error(`API auth check failed (${meResponse.status})`);
         }
         setAuthCookie();
+        await authDebugLog("login.sync_success", { returnTo });
         router.replace(returnTo);
-      } catch {
+      } catch (error) {
         isSyncingRef.current = false;
         setIsSubmitting(false);
-        toast.error("Microsoft login worked, but API auth failed. Check Entra scope/audience config.");
+        await authDebugLog("login.sync_error", toErrorDetails(error));
+        toast.error(`Microsoft login worked, but API auth failed: ${getErrorMessage(error)}`);
       }
     };
 
@@ -58,10 +67,16 @@ export function LoginForm() {
   const handleMicrosoftLogin = async () => {
     setIsSubmitting(true);
     try {
+      await authDebugLog("login.redirect_start", {
+        scopes: loginRequest.scopes,
+        authority: instance.getConfiguration().auth.authority,
+        redirectUri: instance.getConfiguration().auth.redirectUri,
+      });
       await instance.loginRedirect(loginRequest);
-    } catch {
+    } catch (error) {
       setIsSubmitting(false);
-      toast.error("Unable to start Microsoft sign-in.");
+      await authDebugLog("login.redirect_error", toErrorDetails(error));
+      toast.error(`Unable to start Microsoft sign-in: ${getErrorMessage(error)}`);
     }
   };
 

@@ -2,10 +2,11 @@
 
 import * as React from "react";
 
+import { useMsal } from "@azure/msal-react";
 import { useRouter } from "next/navigation";
-import { apiClient } from "@/lib/api/client";
 import { toast } from "sonner";
 
+import { authFetchJson, getActiveAccount } from "@/auth/api-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -20,6 +21,7 @@ const CUSTOM_PROMPT_ID = "custom";
 
 export function RunLauncher() {
   const router = useRouter();
+  const { instance, accounts } = useMsal();
   const launcher = runLaunchers[0];
 
   const instructionOptions = launcher.instructionOptions ?? [];
@@ -132,13 +134,21 @@ export function RunLauncher() {
 
     setIsSubmitting(true);
     try {
-      const { data: payload } = await apiClient.post(launcher.endpoint, {
+      const account = getActiveAccount(instance, accounts);
+      if (!account) {
+        throw new Error("No active Microsoft account found.");
+      }
+
+      const payload = await authFetchJson<{ runid?: string }>(instance, account, launcher.endpoint, {
+        method: "POST",
+        body: JSON.stringify({
         vendor_key: vendorKey,
         test_mode: testMode,
         rent_line: rentLineEnabled && rentLine ? rentLine : undefined,
         attach_only: attachOnly,
         additional_instructions: instructions.trim() ? instructions : undefined,
         apo_override: apoEnabled && apoOverride.trim() ? apoOverride.trim() : undefined,
+        }),
       });
 
       const runid = payload?.runid ?? "";
