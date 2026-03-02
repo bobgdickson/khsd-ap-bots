@@ -126,6 +126,9 @@ def handle_alerts(page) -> tuple[str | None, bool, bool]:
         elif "wait for the process" in alert_text:
             print('Clicking Yes for processing')
             ok_button = page.get_by_role("button", name="Yes")
+        elif "Would you like to wait for confirmation that the Edit process has completed?" in alert_text:
+            print('Clicking Yes to wait for edit process')
+            ok_button = page.get_by_role("button", name="Yes")
         else:
             print('Clicking Ok to close modal')
             ok_button = page.get_by_role("button", name="OK")
@@ -175,6 +178,20 @@ def get_voucher_id(page) -> str:
     loc.wait_for(state="visible", timeout=10000)
     vid = loc.inner_text().strip()
     return vid
+
+
+def get_journal_id(page) -> str:
+    """
+    Scrape the Journal ID from the TargetContent frame after save.
+
+    The PeopleSoft field uses the id ``win0divJRNL_HEADER_JOURNAL_ID``.
+    Behaviour mirrors :func:`get_voucher_id`.
+    """
+    frame = ps_target_frame(page)
+    loc = frame.locator("#win0divJRNL_HEADER_JOURNAL_ID")
+    loc.wait_for(state="visible", timeout=10000)
+    jid = loc.inner_text().strip()
+    return jid
 
 def handle_modal_sequence(page, labels: list[str], file: str | None = None):
     """

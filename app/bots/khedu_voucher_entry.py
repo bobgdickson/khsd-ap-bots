@@ -91,6 +91,7 @@ def scholarship_playwright_bot(
             page.fill("input#i0118", PASSWORD)
             page.click('input[type="submit"]')
             page.wait_for_load_state("networkidle")
+            
 
             # Look for latest Goal code in a voucher and correct history on next one to rename to payee
             page.goto(
@@ -300,7 +301,7 @@ def run_scholarship_entry(scholarship_key: str, test_mode: bool = True, addition
             scholarship_data = asyncio.run(run_scholarship_extraction(str(invoice), additional_instructions))
             scholarship_data = scholarship_data['structured_response']
             if not scholarship_data:
-                print(f"Failed extraction: {invoice.name}")
+                print(f"âŒ Failed extraction: {invoice.name}")
                 runlog.failures += 1
                 process_logs.append(
                     VoucherProcessLog(
@@ -404,4 +405,4 @@ if __name__ == "__main__":
     #runlog = run_vendor_entry("cdw", test_mode=False, attach_only=True, additional_instructions=CDW_PROMPT)
     #runlog = run_vendor_entry("class", test_mode=False, rent_line="FY26", additional_instructions=CLASS_PROMPT)
     #print(test())
-    runlog = run_scholarship_entry("FIC", test_mode=False, additional_instructions=FIC_PROMPT)
+    runlog = run_scholarship_entry("FIC", test_mode=True, additional_instructions=FIC_PROMPT)
