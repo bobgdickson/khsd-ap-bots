@@ -11,7 +11,7 @@ Vendor Restrictions:
 - If the line for Vestis mentions Food Services, skip it.
 
 Amount Guardrail: 
-- Don't process any invoice over $1,000.
+- Don't process any invoice over $1,200.
 
 Tasks:
 1) Check for confidence thresholds (e.g., low PO confidence <0.6 or missing data).
