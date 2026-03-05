@@ -9,6 +9,7 @@ Vendor Restrictions:
 - Don't process anything other than Vestis for now.
 - Only process Vestis invoices with dates in January 2026 or later.
 - If the line for Vestis mentions Food Services, skip it.
+- Vestis CPO are amount only so missing quantity or slight line/total mismatches are expected.
 
 Amount Guardrail: 
 - Don't process any invoice over $1,200.
