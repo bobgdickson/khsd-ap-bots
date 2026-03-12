@@ -1,25 +1,25 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, JSON, String, func
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, JSON, String, UniqueConstraint, func
 
 from .database import Base
 
 
 class BotProcessLog(Base):
-    __tablename__ = "ai_bot_process_log"
+    __tablename__ = "automation_process_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    runid = Column(String(100), index=True)
+    runid = Column(String(255), index=True)
     filename = Column(String(255), index=True)
-    voucher_id = Column(String(100), index=True)
+    voucher_id = Column(String(255), index=True)
     amount = Column(Float)
-    invoice = Column(String(100), index=True)
-    status = Column(String(50), index=True)  # e.g., 'success', 'error'
+    invoice = Column(String(255), index=True)
+    status = Column(String(255), index=True)  # e.g., 'success', 'error'
 
     def __repr__(self) -> str:
         return f"<BotProcessLog(id={self.id}, runid={self.runid}, status={self.status})>"
 
 
 class BotRun(Base):
-    __tablename__ = "ai_bot_runs"
+    __tablename__ = "automation_runs"
 
     id = Column(Integer, primary_key=True, index=True)
     runid = Column(String(100), unique=True, nullable=False, index=True)
@@ -37,7 +37,7 @@ class BotRun(Base):
 
 
 class PaylineExcelItem(Base):
-    __tablename__ = "ai_bot_payline_items"
+    __tablename__ = "automation_payline_items"
 
     id = Column(Integer, primary_key=True, index=True)
     tab_name = Column(String(100), nullable=False, index=True)
@@ -63,7 +63,7 @@ class PaylineExcelItem(Base):
 
 
 class AgentRegistry(Base):
-    __tablename__ = "ai_agents"
+    __tablename__ = "agent_registry"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False, unique=True, index=True)
@@ -82,7 +82,7 @@ class AgentRegistry(Base):
 
 
 class DirectDepositRunLog(Base):
-    __tablename__ = "ai_bot_direct_deposit_runs"
+    __tablename__ = "automation_direct_deposit_runs"
 
     id = Column(Integer, primary_key=True, index=True)
     runid = Column(String(100), unique=True, nullable=False, index=True)
@@ -100,7 +100,7 @@ class DirectDepositRunLog(Base):
 
 
 class DirectDepositProcessLog(Base):
-    __tablename__ = "ai_bot_direct_deposit_process_log"
+    __tablename__ = "automation_direct_deposit_process_logs"
 
     id = Column(Integer, primary_key=True, index=True)
     runid = Column(String(100), index=True)
